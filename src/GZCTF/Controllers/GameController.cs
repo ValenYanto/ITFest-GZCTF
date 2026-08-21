@@ -75,6 +75,9 @@ public class GameController(
                                     participation.Status == ParticipationStatus.Accepted)
             .Select(participation => new { participation.Team.Name, participation.TeamId })
             .ToDictionaryAsync(team => team.Name, team => team.TeamId, token);
+        // GetState may release scheduled hints. Fetch notices afterwards so a newly released hint is
+        // included in this response instead of waiting for the next live-scoreboard poll.
+        var speedrunState = await speedrunService.GetState(id, token);
         (var notices, _) = await noticeRepository.GetLatestNotices(id, token);
         return Ok(new LiveScoreboardStateModel
         {
@@ -83,7 +86,7 @@ public class GameController(
             GameMode = game.Mode,
             ScoreboardFrozen = game.ScoreboardFrozen,
             Config = LiveScoreboardConfigModel.FromConfig(game.LiveScoreboardConfig),
-            SpeedrunState = await speedrunService.GetState(id, token),
+            SpeedrunState = speedrunState,
             TopTeams = scoreboard.ItemList.OrderBy(team => team.Rank).Select(team => new LiveScoreboardTeamModel
             {
                 Id = team.Id,

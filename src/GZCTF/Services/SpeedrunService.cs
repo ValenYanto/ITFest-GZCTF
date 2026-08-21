@@ -180,6 +180,7 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         else
             round.EndsAtUtc = end;
         await context.SaveChangesAsync(token);
+        await ReleaseDueHints(game, round, token);
         await cacheHelper.FlushScoreboardCache(game.Id, token);
         await transaction.CommitAsync(token);
         return true;
@@ -341,27 +342,43 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         if (round.StartedAtUtc is null)
             return;
 
-        var elapsedSeconds = Math.Max(0, (int)(DateTimeOffset.UtcNow - round.StartedAtUtc.Value).TotalSeconds);
+        var ownsTransaction = context.Database.CurrentTransaction is null;
+        await using var transaction = ownsTransaction
+            ? await context.Database.BeginTransactionAsync(token)
+            : null;
+        if (ownsTransaction)
+        {
+            await AcquireGameLock(game.Id, token);
+            var lockedRound = await context.SpeedrunRounds.AsNoTracking().SingleOrDefaultAsync(item =>
+                item.Id == round.Id && item.GameId == game.Id &&
+                (item.Status == SpeedrunRoundStatus.Running || item.Status == SpeedrunRoundStatus.Overtime), token);
+            if (lockedRound is null)
+            {
+                await transaction!.CommitAsync(token);
+                return;
+            }
+            round = lockedRound;
+        }
+
+        var elapsedSeconds = GetHintElapsedSeconds(round, DateTimeOffset.UtcNow);
         var challenges = await context.GameChallenges.AsNoTracking()
             .Where(challenge => challenge.GameId == game.Id && challenge.Category == round.Category &&
                                 challenge.IsEnabled)
             .ToArrayAsync(token);
         challenges = challenges.Where(challenge => challenge.Hints is { Count: > 0 }).ToArray();
-        var solverCounts = await context.FirstSolves.AsNoTracking()
+        var solvedChallengeIds = await context.FirstSolves.AsNoTracking()
             .Where(solve => solve.Challenge.GameId == game.Id && solve.Challenge.Category == round.Category)
-            .GroupBy(solve => solve.ChallengeId)
-            .Select(group => new { ChallengeId = group.Key, Count = group.Count() })
-            .ToDictionaryAsync(group => group.ChallengeId, group => group.Count, token);
-        if (round.Status == SpeedrunRoundStatus.Overtime)
-            challenges = challenges
-                .Where(challenge => solverCounts.GetValueOrDefault(challenge.Id) == 0)
-                .ToArray();
+            .Select(solve => solve.ChallengeId)
+            .Distinct()
+            .ToArrayAsync(token);
+        challenges = challenges
+            .Where(challenge => !solvedChallengeIds.Contains(challenge.Id))
+            .ToArray();
+
+        var releasedByHintIndex = new Dictionary<int, List<string>>();
 
         foreach (var challenge in challenges)
         {
-            if (solverCounts.GetValueOrDefault(challenge.Id) >= 1)
-                continue;
-
             for (var index = 0; index < challenge.Hints!.Count; index++)
             {
                 if (GetHintReleaseSeconds(challenge, index) > elapsedSeconds)
@@ -369,18 +386,53 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
 
                 var released = await context.Database.ExecuteSqlInterpolatedAsync($"""
                     INSERT INTO "SpeedrunHintReleaseLogs" ("GameId", "RoundId", "ChallengeId", "HintIndex", "ReleasedAtUtc")
-                    VALUES ({game.Id}, {round.Id}, {challenge.Id}, {index}, {DateTimeOffset.UtcNow})
+                    SELECT {game.Id}, {round.Id}, {challenge.Id}, {index}, {DateTimeOffset.UtcNow}
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM "FirstSolves" WHERE "ChallengeId" = {challenge.Id}
+                    )
                     ON CONFLICT ("RoundId", "ChallengeId", "HintIndex") DO NOTHING
                     """, token);
                 if (released == 1)
-                    await Announce(game.Id, $"Hint #{index + 1} dropped for {challenge.Title}.", token);
+                {
+                    if (!releasedByHintIndex.TryGetValue(index, out var titles))
+                        releasedByHintIndex[index] = titles = [];
+                    titles.Add(challenge.Title);
+                }
             }
         }
+
+        foreach (var (index, titles) in releasedByHintIndex.OrderBy(item => item.Key))
+            await Announce(game.Id, BuildHintReleaseMessage(index, titles), token);
+
+        if (transaction is not null)
+            await transaction.CommitAsync(token);
     }
 
     private static int GetHintReleaseSeconds(GameChallenge challenge, int index) =>
         challenge.SpeedrunHintReleaseSeconds?.ElementAtOrDefault(index) ??
         (challenge.SpeedrunHintReleaseMinutes?.ElementAtOrDefault(index) ?? 0) * 60;
+
+    internal static int GetHintElapsedSeconds(SpeedrunRound round, DateTimeOffset now)
+    {
+        if (round.StartedAtUtc is null)
+            return 0;
+
+        var wallClockElapsedSeconds = Math.Max(0, (int)(now - round.StartedAtUtc.Value).TotalSeconds);
+        if (round.Status != SpeedrunRoundStatus.Running || round.EndsAtUtc is null)
+            return wallClockElapsedSeconds;
+
+        // The admin timer is authoritative when it is moved forward. Keep wall-clock elapsed time as
+        // a lower bound so extending or moving a timer backwards never makes the hint timeline regress.
+        var totalRoundSeconds = round.DurationSeconds + round.ManuallyExtendedSeconds;
+        var remainingSeconds = Math.Max(0, (int)Math.Ceiling((round.EndsAtUtc.Value - now).TotalSeconds));
+        return Math.Max(wallClockElapsedSeconds, totalRoundSeconds - remainingSeconds);
+    }
+
+    internal static string BuildHintReleaseMessage(int hintIndex, IReadOnlyCollection<string> challengeTitles)
+    {
+        var target = challengeTitles.Count == 1 ? challengeTitles.First() : $"{challengeTitles.Count} challenges";
+        return $"Hint #{hintIndex + 1} released for {target}.";
+    }
 
     private async Task Announce(int gameId, string message, CancellationToken token) =>
         await noticeRepository.AddNotice(new() { GameId = gameId, Type = NoticeType.Normal, Values = [message] }, token);

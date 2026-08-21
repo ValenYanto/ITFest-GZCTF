@@ -203,6 +203,127 @@ public class SpeedrunLifecycleTests(GZCTFApplicationFactory factory)
             value.StartsWith("Hint #", StringComparison.Ordinal))));
     }
 
+    [Fact]
+    public async Task SettingTimerForward_ReleasesOneGroupedHintForOnlyUnsolvedChallenges()
+    {
+        const string password = "HintTimeline@Player123";
+        var user = await TestDataSeeder.CreateUserAsync(factory.Services, TestDataSeeder.RandomName(), password);
+        var team = await TestDataSeeder.CreateTeamAsync(factory.Services, user.Id,
+            $"Hint Timeline {TestDataSeeder.RandomName(8)}");
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Hint Timeline {TestDataSeeder.RandomName(8)}");
+        var solvedChallenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Already Solved", "flag{already_solved}");
+        var firstUnsolvedChallenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "First Unsolved", "flag{first_unsolved}");
+        var secondUnsolvedChallenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Second Unsolved", "flag{second_unsolved}");
+        var participation = await TestDataSeeder.JoinGameAsync(factory.Services, game.Id, team.Id, user.Id);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+        gameEntity.Mode = GameMode.Speedrun;
+        var challengeEntities = await context.GameChallenges
+            .Where(item => item.Id == solvedChallenge.Id || item.Id == firstUnsolvedChallenge.Id ||
+                           item.Id == secondUnsolvedChallenge.Id)
+            .ToArrayAsync();
+        foreach (var challengeEntity in challengeEntities)
+        {
+            challengeEntity.Hints = ["Scheduled after ten elapsed minutes"];
+            challengeEntity.SpeedrunHintReleaseSeconds = [600];
+            challengeEntity.SpeedrunHintReleaseMinutes = [10];
+        }
+        var round = new SpeedrunRound
+        {
+            GameId = game.Id,
+            Category = challengeEntities[0].Category,
+            Status = SpeedrunRoundStatus.Running,
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            EndsAtUtc = DateTimeOffset.UtcNow.AddMinutes(30),
+            DurationSeconds = 1800,
+            DurationMinutes = 30,
+            OvertimeSeconds = 300,
+            OvertimeMinutes = 5
+        };
+        var submission = new Submission
+        {
+            Answer = solvedChallenge.Flag,
+            Status = AnswerResult.Accepted,
+            SubmitTimeUtc = DateTimeOffset.UtcNow,
+            UserId = user.Id,
+            TeamId = team.Id,
+            ParticipationId = participation.Id,
+            GameId = game.Id,
+            ChallengeId = solvedChallenge.Id
+        };
+        context.SpeedrunRounds.Add(round);
+        context.Submissions.Add(submission);
+        await context.SaveChangesAsync();
+        context.FirstSolves.Add(new FirstSolve
+        {
+            ParticipationId = participation.Id,
+            ChallengeId = solvedChallenge.Id,
+            SubmissionId = submission.Id,
+            AcceptedTimeUtc = DateTimeOffset.UtcNow
+        });
+        await context.SaveChangesAsync();
+
+        var speedrunService = scope.ServiceProvider.GetRequiredService<SpeedrunService>();
+        Assert.True(await speedrunService.SetRemainingTime(gameEntity, round.Id, 1200));
+        Assert.True(await speedrunService.SetRemainingTime(gameEntity, round.Id, 1200));
+
+        var logs = await context.SpeedrunHintReleaseLogs.AsNoTracking()
+            .Where(log => log.RoundId == round.Id).ToArrayAsync();
+        Assert.Equal(2, logs.Length);
+        Assert.DoesNotContain(logs, log => log.ChallengeId == solvedChallenge.Id);
+        Assert.Equal([firstUnsolvedChallenge.Id, secondUnsolvedChallenge.Id],
+            logs.Select(log => log.ChallengeId).Order().ToArray());
+        var notices = await context.GameNotices.AsNoTracking()
+            .Where(notice => notice.GameId == game.Id && notice.Values != null).ToArrayAsync();
+        Assert.Single(notices, notice => notice.Values!.Contains("Hint #1 released for 2 challenges."));
+    }
+
+    [Fact]
+    public async Task LiveScoreboard_ReturnsHintReleasedByTheSamePoll()
+    {
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Live Hint {TestDataSeeder.RandomName(8)}");
+        var challenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Live Poll Hint", "flag{live_poll_hint}");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+            gameEntity.Mode = GameMode.Speedrun;
+            var challengeEntity = await context.GameChallenges.SingleAsync(item => item.Id == challenge.Id);
+            challengeEntity.Hints = ["Visible without waiting for another poll"];
+            challengeEntity.SpeedrunHintReleaseSeconds = [5];
+            challengeEntity.SpeedrunHintReleaseMinutes = [0];
+            context.SpeedrunRounds.Add(new SpeedrunRound
+            {
+                GameId = game.Id,
+                Category = challengeEntity.Category,
+                Status = SpeedrunRoundStatus.Running,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10),
+                EndsAtUtc = DateTimeOffset.UtcNow.AddSeconds(290),
+                DurationSeconds = 300,
+                DurationMinutes = 5,
+                OvertimeSeconds = 60,
+                OvertimeMinutes = 1
+            });
+            await context.SaveChangesAsync();
+        }
+
+        using var client = factory.CreateClient();
+        var response = await client.GetAsync($"/api/Game/{game.Id}/Live");
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Contains(document.RootElement.GetProperty("recentEvents").EnumerateArray(), eventItem =>
+            eventItem.GetProperty("message").GetString()?.StartsWith("Hint #1", StringComparison.Ordinal) == true);
+    }
+
     private static async Task Login(HttpClient client, string userName, string password)
     {
         var response = await client.PostAsJsonAsync("/api/Account/LogIn",

@@ -8,6 +8,7 @@
     "lint": "oxlint --fix",
     "check": "tsc --noEmit --strict --project tsconfig.app.json",
     "test:challenge-modal": "node --experimental-strip-types tests/ChallengeModalState.test.ts",
+    "test:live-events": "node --experimental-strip-types tests/LiveEventQueue.test.ts",
     "build": "pnpm check && vite build",
     "preview": "vite preview",
     "prettier": "prettier --write src --write plugins --write *.mjs --write *.mts",
