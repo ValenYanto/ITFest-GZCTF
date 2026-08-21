@@ -94,6 +94,7 @@ public class FlagChecker(
                     scope.ServiceProvider.GetRequiredService<IGameNoticeRepository>();
                 var submissionRepository =
                     scope.ServiceProvider.GetRequiredService<ISubmissionRepository>();
+                var speedrunService = scope.ServiceProvider.GetRequiredService<SpeedrunService>();
                 var discordWebhookService =
                     scope.ServiceProvider.GetRequiredService<DiscordWebhookService>();
 
@@ -176,6 +177,8 @@ public class FlagChecker(
 
                     item.Status = ans;
                     await submissionRepository.SendSubmission(item);
+                    if (ans == AnswerResult.Accepted)
+                        await speedrunService.CompleteOvertimeIfSolved(item.GameId, token);
                 }
                 catch (DbUpdateConcurrencyException)
                 {

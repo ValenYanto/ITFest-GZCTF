@@ -376,6 +376,116 @@ public class SpeedrunLifecycleTests(GZCTFApplicationFactory factory)
             notice => notice.Values!.Contains("Hint #1 released for Overtime Scheduled Hint."));
     }
 
+    [Fact]
+    public async Task Overtime_ClearsAutomaticallyAfterEveryEnabledChallengeHasAFirstSolve()
+    {
+        const string password = "OvertimeClear@Player123";
+        var user = await TestDataSeeder.CreateUserAsync(factory.Services, TestDataSeeder.RandomName(), password);
+        var team = await TestDataSeeder.CreateTeamAsync(factory.Services, user.Id,
+            $"Overtime Clear {TestDataSeeder.RandomName(8)}");
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Overtime Clear {TestDataSeeder.RandomName(8)}");
+        var firstChallenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Overtime First", "flag{overtime_first}");
+        var lastChallenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Overtime Last", "flag{overtime_last}");
+        var participation = await TestDataSeeder.JoinGameAsync(factory.Services, game.Id, team.Id, user.Id);
+        int roundId;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+            gameEntity.Mode = GameMode.Speedrun;
+            var firstEntity = await context.GameChallenges.SingleAsync(item => item.Id == firstChallenge.Id);
+            var lastEntity = await context.GameChallenges.SingleAsync(item => item.Id == lastChallenge.Id);
+            var now = DateTimeOffset.UtcNow;
+            var round = new SpeedrunRound
+            {
+                GameId = game.Id,
+                Category = firstEntity.Category,
+                Status = SpeedrunRoundStatus.Overtime,
+                StartedAtUtc = now.AddMinutes(-30),
+                EndsAtUtc = now,
+                OvertimeEndsAtUtc = now.AddMinutes(5),
+                DurationSeconds = 1800,
+                DurationMinutes = 30,
+                OvertimeSeconds = 300,
+                OvertimeMinutes = 5
+            };
+            var firstSubmission = new Submission
+            {
+                Answer = firstChallenge.Flag,
+                Status = AnswerResult.Accepted,
+                SubmitTimeUtc = now,
+                UserId = user.Id,
+                TeamId = team.Id,
+                ParticipationId = participation.Id,
+                GameId = game.Id,
+                ChallengeId = firstEntity.Id
+            };
+            var lastSubmission = new Submission
+            {
+                Answer = lastChallenge.Flag,
+                Status = AnswerResult.Accepted,
+                SubmitTimeUtc = now,
+                UserId = user.Id,
+                TeamId = team.Id,
+                ParticipationId = participation.Id,
+                GameId = game.Id,
+                ChallengeId = lastEntity.Id
+            };
+            context.SpeedrunRounds.Add(round);
+            context.Submissions.AddRange(firstSubmission, lastSubmission);
+            await context.SaveChangesAsync();
+            roundId = round.Id;
+            context.FirstSolves.Add(new FirstSolve
+            {
+                ParticipationId = participation.Id,
+                ChallengeId = firstEntity.Id,
+                SubmissionId = firstSubmission.Id,
+                AcceptedTimeUtc = now
+            });
+            await context.SaveChangesAsync();
+
+            var speedrunService = scope.ServiceProvider.GetRequiredService<SpeedrunService>();
+            Assert.False(await speedrunService.CompleteOvertimeIfSolved(game.Id));
+            Assert.Equal(SpeedrunRoundStatus.Overtime, round.Status);
+
+            context.FirstSolves.Add(new FirstSolve
+            {
+                ParticipationId = participation.Id,
+                ChallengeId = lastEntity.Id,
+                SubmissionId = lastSubmission.Id,
+                AcceptedTimeUtc = now
+            });
+            await context.SaveChangesAsync();
+        }
+
+        var completionResults = await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+        {
+            await using var scope = factory.Services.CreateAsyncScope();
+            return await scope.ServiceProvider.GetRequiredService<SpeedrunService>()
+                .CompleteOvertimeIfSolved(game.Id);
+        }));
+        Assert.Single(completionResults, completed => completed);
+
+        await using var assertionScope = factory.Services.CreateAsyncScope();
+        var assertionContext = assertionScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var storedRound = await assertionContext.SpeedrunRounds.AsNoTracking().SingleAsync(item => item.Id == roundId);
+        Assert.Equal(SpeedrunRoundStatus.Finished, storedRound.Status);
+        Assert.NotNull(storedRound.FinishedAtUtc);
+        var finishNotices = await assertionContext.GameNotices.AsNoTracking()
+            .Where(notice => notice.GameId == game.Id && notice.Values != null).ToArrayAsync();
+        Assert.Single(finishNotices, notice => notice.Values!.Contains("Speedrun round finished."));
+
+        using var client = factory.CreateClient();
+        var stateResponse = await client.GetAsync($"/api/Game/{game.Id}/Speedrun/State");
+        stateResponse.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await stateResponse.Content.ReadAsStringAsync());
+        Assert.Equal(JsonValueKind.Null, document.RootElement.GetProperty("currentRound").ValueKind);
+    }
+
     private static async Task Login(HttpClient client, string userName, string password)
     {
         var response = await client.PostAsJsonAsync("/api/Account/LogIn",

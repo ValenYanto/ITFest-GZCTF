@@ -186,6 +186,31 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         return true;
     }
 
+    /// <summary>
+    /// Finishes an overtime round as soon as every enabled challenge in its category has a first solve.
+    /// Safe to call after every accepted submission; only the request owning the game lock can transition it.
+    /// </summary>
+    public async Task<bool> CompleteOvertimeIfSolved(int gameId, CancellationToken token = default)
+    {
+        if (!await context.SpeedrunRounds.AsNoTracking().AnyAsync(round => round.GameId == gameId &&
+                round.Status == SpeedrunRoundStatus.Overtime, token))
+            return false;
+
+        await using var transaction = await context.Database.BeginTransactionAsync(token);
+        await AcquireGameLock(gameId, token);
+        var round = await context.SpeedrunRounds.SingleOrDefaultAsync(item => item.GameId == gameId &&
+            item.Status == SpeedrunRoundStatus.Overtime, token);
+        if (round is null || await HasUnsolvedChallenges(gameId, round.Category, token))
+        {
+            await transaction.CommitAsync(token);
+            return false;
+        }
+
+        await FinishRound(round, DateTimeOffset.UtcNow, token);
+        await transaction.CommitAsync(token);
+        return true;
+    }
+
     public async Task<bool> UpdateCategory(int gameId, int categoryId, bool? used, bool? included,
         CancellationToken token = default)
     {
@@ -295,9 +320,7 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         var now = DateTimeOffset.UtcNow;
         if (round.Status == SpeedrunRoundStatus.Running && round.EndsAtUtc <= now)
         {
-            var challengeIds = context.GameChallenges.Where(c => c.GameId == game.Id && c.Category == round.Category &&
-                c.IsEnabled).Select(c => c.Id);
-            var hasUnsolved = await challengeIds.AnyAsync(id => !context.FirstSolves.Any(fs => fs.ChallengeId == id), token);
+            var hasUnsolved = await HasUnsolvedChallenges(game.Id, round.Category, token);
             if (hasUnsolved && round.OvertimeSeconds > 0)
             {
                 round.Status = SpeedrunRoundStatus.Overtime;
@@ -309,23 +332,33 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
                 }
             }
             else
+                await FinishRound(round, now, token);
+
+            if (round.Status == SpeedrunRoundStatus.Overtime)
             {
-                round.Status = SpeedrunRoundStatus.Finished;
-                round.FinishedAtUtc = now;
+                await context.SaveChangesAsync(token);
+                await cacheHelper.FlushScoreboardCache(game.Id, token);
             }
-            await context.SaveChangesAsync(token);
-            if (round.Status == SpeedrunRoundStatus.Finished)
-                await Announce(game.Id, "Speedrun round finished.", token);
-            await cacheHelper.FlushScoreboardCache(game.Id, token);
         }
-        else if (round.Status == SpeedrunRoundStatus.Overtime && round.OvertimeEndsAtUtc <= now)
+        else if (round.Status == SpeedrunRoundStatus.Overtime &&
+                 (!await HasUnsolvedChallenges(game.Id, round.Category, token) || round.OvertimeEndsAtUtc <= now))
         {
-            round.Status = SpeedrunRoundStatus.Finished;
-            round.FinishedAtUtc = now;
-            await context.SaveChangesAsync(token);
-            await Announce(game.Id, "Speedrun round finished.", token);
-            await cacheHelper.FlushScoreboardCache(game.Id, token);
+            await FinishRound(round, now, token);
         }
+    }
+
+    private Task<bool> HasUnsolvedChallenges(int gameId, ChallengeCategory category, CancellationToken token) =>
+        context.GameChallenges.AsNoTracking().AnyAsync(challenge => challenge.GameId == gameId &&
+            challenge.Category == category && challenge.IsEnabled &&
+            !context.FirstSolves.Any(solve => solve.ChallengeId == challenge.Id), token);
+
+    private async Task FinishRound(SpeedrunRound round, DateTimeOffset finishedAt, CancellationToken token)
+    {
+        round.Status = SpeedrunRoundStatus.Finished;
+        round.FinishedAtUtc = finishedAt;
+        await context.SaveChangesAsync(token);
+        await Announce(round.GameId, "Speedrun round finished.", token);
+        await cacheHelper.FlushScoreboardCache(round.GameId, token);
     }
 
     private Task<SpeedrunRound?> CurrentRound(int gameId, CancellationToken token) =>
