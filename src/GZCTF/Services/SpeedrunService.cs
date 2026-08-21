@@ -418,14 +418,29 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
             return 0;
 
         var wallClockElapsedSeconds = Math.Max(0, (int)(now - round.StartedAtUtc.Value).TotalSeconds);
-        if (round.Status != SpeedrunRoundStatus.Running || round.EndsAtUtc is null)
-            return wallClockElapsedSeconds;
+        var regularDurationSeconds = round.DurationSeconds > 0
+            ? round.DurationSeconds
+            : round.DurationMinutes * 60;
+        var totalRegularSeconds = regularDurationSeconds + round.ManuallyExtendedSeconds;
 
-        // The admin timer is authoritative when it is moved forward. Keep wall-clock elapsed time as
-        // a lower bound so extending or moving a timer backwards never makes the hint timeline regress.
-        var totalRoundSeconds = round.DurationSeconds + round.ManuallyExtendedSeconds;
+        if (round.Status == SpeedrunRoundStatus.Overtime && round.OvertimeEndsAtUtc is not null)
+        {
+            var overtimeDurationSeconds = round.OvertimeSeconds > 0
+                ? round.OvertimeSeconds
+                : round.OvertimeMinutes * 60;
+            var overtimeRemainingSeconds = Math.Max(0,
+                (int)Math.Ceiling((round.OvertimeEndsAtUtc.Value - now).TotalSeconds));
+            var overtimeElapsedSeconds = Math.Max(0, overtimeDurationSeconds - overtimeRemainingSeconds);
+            return totalRegularSeconds + overtimeElapsedSeconds;
+        }
+
+        if (round.Status != SpeedrunRoundStatus.Running || round.EndsAtUtc is null)
+            return Math.Max(wallClockElapsedSeconds, totalRegularSeconds);
+
+        // The admin timer is authoritative when it is moved forward. Keep wall-clock elapsed time as a
+        // lower bound while Running so an extension never makes the hint timeline regress.
         var remainingSeconds = Math.Max(0, (int)Math.Ceiling((round.EndsAtUtc.Value - now).TotalSeconds));
-        return Math.Max(wallClockElapsedSeconds, totalRoundSeconds - remainingSeconds);
+        return Math.Max(wallClockElapsedSeconds, totalRegularSeconds - remainingSeconds);
     }
 
     internal static string BuildHintReleaseMessage(int hintIndex, IReadOnlyCollection<string> challengeTitles)

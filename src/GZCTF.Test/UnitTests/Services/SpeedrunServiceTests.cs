@@ -55,6 +55,25 @@ public class SpeedrunServiceTests
     }
 
     [Fact]
+    public void HintElapsedTime_ContinuesFromRegularRoundIntoOvertime()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var round = new SpeedrunRound
+        {
+            Status = SpeedrunRoundStatus.Overtime,
+            StartedAtUtc = now,
+            EndsAtUtc = now,
+            OvertimeEndsAtUtc = now.AddMinutes(4),
+            DurationSeconds = 1800,
+            DurationMinutes = 30,
+            OvertimeSeconds = 300,
+            OvertimeMinutes = 5
+        };
+
+        Assert.Equal(1860, SpeedrunService.GetHintElapsedSeconds(round, now));
+    }
+
+    [Fact]
     public void HintAnnouncement_GroupsMultipleChallenges()
     {
         Assert.Equal("Hint #1 released for Crypto Lock.",

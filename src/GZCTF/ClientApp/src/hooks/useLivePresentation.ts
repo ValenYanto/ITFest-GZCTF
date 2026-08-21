@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LiveAnnouncement, LiveSpinPhase } from '@Components/live/types'
-import { crossedReminderPoints } from '@Utils/LiveEventQueue'
+import { crossedReminderPoints, withoutBloodScoreChanges } from '@Utils/LiveEventQueue'
 import { formatDurationSeconds } from '@Utils/Shared'
 import { useLiveEventQueue } from '@Hooks/useLiveEventQueue'
 import { useStageSound } from '@Hooks/useStageSound'
@@ -178,24 +178,20 @@ export const useLivePresentation = (
       else markSeen([event.id!])
     }
 
-    const changed = new Set<number>()
+    const scoreChangedTeamIds: number[] = []
     for (const team of state.topTeams ?? []) {
       const oldScore = previousScores.current.get(team.id!)
       if (oldScore !== undefined && (team.score ?? 0) > oldScore) {
-        changed.add(team.id!)
+        scoreChangedTeamIds.push(team.id!)
         if (!freshBloodTeamIds.has(team.id!)) play('correctSubmit')
       }
       previousScores.current.set(team.id!, team.score ?? 0)
     }
-    if (changed.size) {
-      setChangedTeams(changed)
-      setBloodAttackTeams(
-        new Set(
-          (state.topTeams ?? [])
-            .filter((team) => changed.has(team.id!) && freshBloodTeamIds.has(team.id!))
-            .map((team) => team.id!)
-        )
-      )
+    if (scoreChangedTeamIds.length) {
+      const ordinaryChanges = new Set(withoutBloodScoreChanges(scoreChangedTeamIds, freshBloodTeamIds))
+      const bloodChanges = new Set(scoreChangedTeamIds.filter((teamId) => freshBloodTeamIds.has(teamId)))
+      setChangedTeams(ordinaryChanges)
+      setBloodAttackTeams(bloodChanges)
       window.clearTimeout(attackTimer.current)
       attackTimer.current = window.setTimeout(() => {
         setChangedTeams(new Set())

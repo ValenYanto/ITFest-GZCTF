@@ -324,6 +324,58 @@ public class SpeedrunLifecycleTests(GZCTFApplicationFactory factory)
             eventItem.GetProperty("message").GetString()?.StartsWith("Hint #1", StringComparison.Ordinal) == true);
     }
 
+    [Fact]
+    public async Task Overtime_ReleasesHintScheduledAtEndOfRegularTimerAfterClockWasMovedForward()
+    {
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Overtime Hint {TestDataSeeder.RandomName(8)}");
+        var challenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Overtime Scheduled Hint", "flag{overtime_scheduled_hint}");
+        int roundId;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+            gameEntity.Mode = GameMode.Speedrun;
+            var challengeEntity = await context.GameChallenges.SingleAsync(item => item.Id == challenge.Id);
+            challengeEntity.Hints = ["Released when the regular thirty-minute clock has elapsed"];
+            challengeEntity.SpeedrunHintReleaseSeconds = [1800];
+            challengeEntity.SpeedrunHintReleaseMinutes = [30];
+            var now = DateTimeOffset.UtcNow;
+            var round = new SpeedrunRound
+            {
+                GameId = game.Id,
+                Category = challengeEntity.Category,
+                Status = SpeedrunRoundStatus.Overtime,
+                // A manually advanced timer can enter overtime before thirty wall-clock minutes pass.
+                StartedAtUtc = now,
+                EndsAtUtc = now,
+                OvertimeEndsAtUtc = now.AddMinutes(5),
+                DurationSeconds = 1800,
+                DurationMinutes = 30,
+                OvertimeSeconds = 300,
+                OvertimeMinutes = 5
+            };
+            context.SpeedrunRounds.Add(round);
+            await context.SaveChangesAsync();
+            roundId = round.Id;
+        }
+
+        using var client = factory.CreateClient();
+        var response = await client.GetAsync($"/api/Game/{game.Id}/Speedrun/State");
+        response.EnsureSuccessStatusCode();
+
+        await using var assertionScope = factory.Services.CreateAsyncScope();
+        var assertionContext = assertionScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        Assert.Single(await assertionContext.SpeedrunHintReleaseLogs.AsNoTracking()
+            .Where(log => log.RoundId == roundId && log.ChallengeId == challenge.Id).ToArrayAsync());
+        var notices = await assertionContext.GameNotices.AsNoTracking()
+            .Where(notice => notice.GameId == game.Id && notice.Values != null).ToArrayAsync();
+        Assert.Single(notices,
+            notice => notice.Values!.Contains("Hint #1 released for Overtime Scheduled Hint."));
+    }
+
     private static async Task Login(HttpClient client, string userName, string password)
     {
         var response = await client.PostAsJsonAsync("/api/Account/LogIn",

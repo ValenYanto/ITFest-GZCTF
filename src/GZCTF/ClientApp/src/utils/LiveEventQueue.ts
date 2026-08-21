@@ -41,3 +41,7 @@ export const REMINDER_POINTS = [1200, 600, 300, 180, 60, 30, 10, 9, 8, 7, 6, 5, 
 /** Returns timer thresholds crossed while counting down, including thresholds skipped between polls. */
 export const crossedReminderPoints = (previous: number, current: number) =>
   current >= previous ? [] : REMINDER_POINTS.filter((point) => previous > point && current <= point)
+
+/** Blood cinematics own their score change; only non-blood solves use the ordinary solve animation. */
+export const withoutBloodScoreChanges = (changedTeamIds: number[], bloodTeamIds: ReadonlySet<number>) =>
+  changedTeamIds.filter((teamId) => !bloodTeamIds.has(teamId))

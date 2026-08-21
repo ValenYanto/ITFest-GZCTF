@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { crossedReminderPoints, dequeueLiveEvent } from '../src/utils/LiveEventQueue.ts'
+import { crossedReminderPoints, dequeueLiveEvent, withoutBloodScoreChanges } from '../src/utils/LiveEventQueue.ts'
 
 test('simultaneous live events play hint, blood, then reminder', () => {
   const queue = [
@@ -29,4 +29,9 @@ test('reminder detects a threshold skipped between scoreboard polls', () => {
   assert.deepEqual(crossedReminderPoints(1205, 1198), [1200])
   assert.deepEqual(crossedReminderPoints(600, 599), [])
   assert.deepEqual(crossedReminderPoints(1198, 1205), [])
+})
+
+test('blood score changes do not trigger the ordinary solve animation', () => {
+  assert.deepEqual(withoutBloodScoreChanges([11, 22, 33], new Set([22])), [11, 33])
+  assert.deepEqual(withoutBloodScoreChanges([22], new Set([22])), [])
 })
