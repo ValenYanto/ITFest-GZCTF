@@ -74,6 +74,17 @@ public interface IGameChallengeRepository : IRepository
     public Task<bool> EnsureInstances(GameChallenge challenge, Game game, CancellationToken token = default);
 
     /// <summary>
+    /// Reconcile missing instances for enabled challenges and accepted participations.
+    /// The operation is set-based, idempotent, and safe to run concurrently.
+    /// </summary>
+    /// <param name="gameId">Game ID</param>
+    /// <param name="challengeIds">Optional enabled challenge IDs to limit reconciliation</param>
+    /// <param name="token"></param>
+    /// <returns>Number of inserted instance rows</returns>
+    public Task<int> ReconcileInstances(int gameId, IReadOnlyCollection<int>? challengeIds = null,
+        CancellationToken token = default);
+
+    /// <summary>
     /// Update the attachment of a challenge
     /// </summary>
     /// <param name="challenge"></param>

@@ -33,21 +33,48 @@ public class GameChallengeRepository(
 
     public async Task<bool> EnsureInstances(GameChallenge challenge, Game game, CancellationToken token = default)
     {
-        var newInstances = Context.Participations
-            .Where(p => p.GameId == game.Id && !Context.Set<GameInstance>()
-                .Where(gi => gi.ChallengeId == challenge.Id)
-                .Select(gi => gi.ParticipationId).Contains(p.Id)
-            )
-            .Select(p => new GameInstance { ParticipationId = p.Id, ChallengeId = challenge.Id })
-            .ToList();
-
-        if (newInstances.Count == 0)
+        if (!challenge.IsEnabled || challenge.GameId != game.Id)
             return false;
 
-        await Context.Set<GameInstance>().AddRangeAsync(newInstances, token);
+        // Preserve the original lifecycle contract: callers may have just toggled the tracked
+        // challenge to enabled. Persist that state before the set-based INSERT reads it back.
         await SaveAsync(token);
+        return await ReconcileInstances(game.Id, [challenge.Id], token) > 0;
+    }
 
-        return true;
+    public Task<int> ReconcileInstances(int gameId, IReadOnlyCollection<int>? challengeIds = null,
+        CancellationToken token = default)
+    {
+        var accepted = (byte)ParticipationStatus.Accepted;
+        var minimumOperationTime = DateTimeOffset.MinValue;
+        var ids = challengeIds?.Distinct().ToArray();
+
+        return ids is { Length: > 0 }
+            ? Context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "GameInstances"
+                    ("ChallengeId", "ParticipationId", "IsLoaded", "LastContainerOperation")
+                SELECT challenge."Id", participation."Id", FALSE, {minimumOperationTime}
+                FROM "GameChallenges" AS challenge
+                CROSS JOIN "Participations" AS participation
+                WHERE challenge."GameId" = {gameId}
+                  AND participation."GameId" = {gameId}
+                  AND participation."Status" = {accepted}
+                  AND challenge."IsEnabled" = TRUE
+                  AND challenge."Id" = ANY ({ids})
+                ON CONFLICT ("ChallengeId", "ParticipationId") DO NOTHING
+                """, token)
+            : Context.Database.ExecuteSqlInterpolatedAsync($"""
+                INSERT INTO "GameInstances"
+                    ("ChallengeId", "ParticipationId", "IsLoaded", "LastContainerOperation")
+                SELECT challenge."Id", participation."Id", FALSE, {minimumOperationTime}
+                FROM "GameChallenges" AS challenge
+                CROSS JOIN "Participations" AS participation
+                WHERE challenge."GameId" = {gameId}
+                  AND participation."GameId" = {gameId}
+                  AND participation."Status" = {accepted}
+                  AND challenge."IsEnabled" = TRUE
+                ON CONFLICT ("ChallengeId", "ParticipationId") DO NOTHING
+                """, token);
     }
 
     public Task<GameChallenge?> GetChallenge(int gameId, int id, CancellationToken token = default)

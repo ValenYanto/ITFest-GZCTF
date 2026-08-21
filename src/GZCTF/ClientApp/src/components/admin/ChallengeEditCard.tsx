@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Card,
+  Checkbox,
   Group,
   Progress,
   Stack,
@@ -22,9 +23,11 @@ import classes from '@Styles/ChallengeEditCard.module.css'
 interface ChallengeEditCardProps {
   challenge: ChallengeInfoModel
   onToggle: (challenge: ChallengeInfoModel, setDisabled: Dispatch<SetStateAction<boolean>>) => void
+  selected?: boolean
+  onSelectedChange?: (selected: boolean) => void
 }
 
-export const ChallengeEditCard: FC<ChallengeEditCardProps> = ({ challenge, onToggle }) => {
+export const ChallengeEditCard: FC<ChallengeEditCardProps> = ({ challenge, onToggle, selected, onSelectedChange }) => {
   const challengeCategoryLabelMap = useChallengeCategoryLabelMap()
   const data = challengeCategoryLabelMap.get(challenge.category as ChallengeCategory)
   const theme = useMantineTheme()
@@ -50,6 +53,11 @@ export const ChallengeEditCard: FC<ChallengeEditCardProps> = ({ challenge, onTog
   return (
     <Card shadow="sm" p="sm">
       <Group wrap="nowrap" justify="space-between" gap="xs">
+        <Checkbox
+          aria-label={`Select ${challenge.title}`}
+          checked={selected ?? false}
+          onChange={(event) => onSelectedChange?.(event.currentTarget.checked)}
+        />
         <Switch
           color={color}
           disabled={disabled}

@@ -108,7 +108,7 @@ const Games: FC = () => {
         setCurrent((page - 1) * ITEM_COUNT_PER_PAGE + gamesRes.data.length)
 
         // Navigate to the imported game
-        navigate(`/admin/games/${res.data}/info`)
+        navigate(`/admin/games/${res.data}/challenges?imported=1`)
       }
     } catch (err) {
       showErrorMsg(err, t)

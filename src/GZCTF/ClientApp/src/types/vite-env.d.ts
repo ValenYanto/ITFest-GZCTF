@@ -11,8 +11,14 @@ interface ImportMeta {
   readonly env: ImportMetaEnv
 }
 
+declare module '*.wav' {
+  const url: string
+
+  export default url
+}
+
 declare module 'virtual:i18n-manifest' {
-  declare const manifest: Record<string, string>
+  const manifest: Record<string, string>
 
   export default manifest
 }

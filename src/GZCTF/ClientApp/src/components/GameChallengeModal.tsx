@@ -6,14 +6,14 @@ import { Icon } from '@mdi/react'
 import React, { FC, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ChallengeModal } from '@Components/ChallengeModal'
+import { challengeLoadErrorMessage, resolveChallengeModalLoadState } from '@Utils/ChallengeModalState'
 import { encryptApiData } from '@Utils/Crypto'
 import { showErrorMsg } from '@Utils/Shared'
 import { ChallengeCategoryItemProps } from '@Utils/Shared'
 import { useConfig } from '@Hooks/useConfig'
 import api, { AnswerResult, ChallengeType, SubmissionType } from '@Api'
 
-const AI_USAGE_DISCLOSURE_REQUIRED =
-  'Isi link AI atau pernyataan bahwa Anda tidak memakai AI sebelum mengirim flag.'
+const AI_USAGE_DISCLOSURE_REQUIRED = 'Isi link AI atau pernyataan bahwa Anda tidak memakai AI sebelum mengirim flag.'
 const AI_USAGE_DISCLOSURE_INVALID =
   'Isi harus berupa link percakapan AI dengan protokol http/https atau tepat "Saya tidak memakai AI".'
 const NO_AI_DECLARATION = 'Saya tidak memakai AI'
@@ -45,12 +45,34 @@ interface GameChallengeModalProps extends ModalProps {
 }
 
 export const GameChallengeModal: FC<GameChallengeModalProps> = (props) => {
-  const { gameId, gameTitle, gameEnded, practiceMode, challengeId, cateData, status, speedrun, title, score,
-    ...modalProps } = props
+  const {
+    gameId,
+    gameTitle,
+    gameEnded,
+    practiceMode,
+    challengeId,
+    cateData,
+    status,
+    speedrun,
+    title,
+    score,
+    ...modalProps
+  } = props
 
-  const { data: challenge, mutate } = api.game.useGameGetChallenge(gameId, challengeId, {
-    refreshInterval: speedrun ? 5 * 1000 : 120 * 1000,
-  })
+  const {
+    data: challenge,
+    error,
+    mutate,
+  } = api.game.useGameGetChallenge(
+    gameId,
+    challengeId,
+    {
+      refreshInterval: speedrun ? 5 * 1000 : 120 * 1000,
+      keepPreviousData: false,
+      shouldRetryOnError: false,
+    },
+    modalProps.opened && gameId > 0 && challengeId > 0
+  )
 
   const { config } = useConfig()
   const { t } = useTranslation()
@@ -70,6 +92,20 @@ export const GameChallengeModal: FC<GameChallengeModalProps> = (props) => {
   const [solverFile, setSolverFile] = useState<File | null>(null)
   const [solverFileError, setSolverFileError] = useState<string>()
   const [solvedChallengeId, setSolvedChallengeId] = useState<number | null>(null)
+
+  useEffect(() => {
+    setDisabled(false)
+    setSubmitId(0)
+    setFlag('')
+    setAiUsageDisclosure('')
+    setAiUsageDisclosureError(undefined)
+    setSolverFile(null)
+    setSolverFileError(undefined)
+    setSolvedChallengeId(null)
+  }, [gameId, challengeId])
+
+  const loadState = resolveChallengeModalLoadState(modalProps.opened, Boolean(challenge), error)
+  const challengeError = challengeLoadErrorMessage(error)
 
   const isLimitReached = (challenge?.limit && (challenge.attempts ?? 0) >= challenge.limit) || false
 
@@ -223,16 +259,17 @@ export const GameChallengeModal: FC<GameChallengeModalProps> = (props) => {
 
     try {
       const encryptedFlag = await encryptApiData(t, flag, config.apiPublicKey)
-      const res = !speedrun && solverFile
-        ? await api.game.gameSubmitWithSolver(gameId, challengeId, {
-          flag: encryptedFlag,
-          aiUsageDisclosure: normalizedAiUsageDisclosure,
-          solverFile,
-        })
-        : await api.game.gameSubmit(gameId, challengeId, {
-          flag: encryptedFlag,
-          aiUsageDisclosure: speedrun ? undefined : normalizedAiUsageDisclosure,
-        })
+      const res =
+        !speedrun && solverFile
+          ? await api.game.gameSubmitWithSolver(gameId, challengeId, {
+              Flag: encryptedFlag,
+              AiUsageDisclosure: normalizedAiUsageDisclosure,
+              SolverFile: solverFile,
+            })
+          : await api.game.gameSubmit(gameId, challengeId, {
+              flag: encryptedFlag,
+              aiUsageDisclosure: speedrun ? undefined : normalizedAiUsageDisclosure,
+            })
       setSubmitId(res.data)
       notifications.clean()
       showNotification({
@@ -344,7 +381,12 @@ export const GameChallengeModal: FC<GameChallengeModalProps> = (props) => {
     <ChallengeModal
       {...modalProps}
       gameTitle={gameTitle}
-      challenge={challenge ?? { title, score }}
+      challenge={challenge}
+      fallbackTitle={title}
+      fallbackScore={score}
+      loading={loadState === 'loading'}
+      errorMessage={challengeError}
+      onRetry={() => void mutate()}
       cateData={cateData}
       solved={(status !== SubmissionType.Unaccepted && status !== undefined) || solvedChallengeId === challengeId}
       flag={flag}

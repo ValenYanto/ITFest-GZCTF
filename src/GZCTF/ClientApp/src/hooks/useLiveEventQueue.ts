@@ -3,6 +3,7 @@ import { LiveAnnouncement } from '@Components/live/types'
 
 export const useLiveEventQueue = (onPlay: (event: LiveAnnouncement) => void) => {
   const [active, setActive] = useState<LiveAnnouncement>()
+  const [visible, setVisible] = useState<LiveAnnouncement>()
   const queue = useRef<LiveAnnouncement[]>([])
   const seen = useRef(new Set<string>())
 
@@ -16,11 +17,20 @@ export const useLiveEventQueue = (onPlay: (event: LiveAnnouncement) => void) => 
   const markSeen = useCallback((keys: string[]) => keys.forEach((key) => seen.current.add(key)), [])
 
   useEffect(() => {
+    setVisible(undefined)
     if (!active) return
+
     onPlay(active)
-    const timer = window.setTimeout(() => setActive(queue.current.shift()), active.duration ?? 3200)
-    return () => window.clearTimeout(timer)
+    const revealTimer = active.showPopup === false
+      ? undefined
+      : window.setTimeout(() => setVisible(active), active.popupDelay ?? 0)
+    const advanceTimer = window.setTimeout(() => setActive(queue.current.shift()), active.duration ?? 3200)
+
+    return () => {
+      if (revealTimer !== undefined) window.clearTimeout(revealTimer)
+      window.clearTimeout(advanceTimer)
+    }
   }, [active, onPlay])
 
-  return { active, enqueue, markSeen }
+  return { active, visible, enqueue, markSeen }
 }

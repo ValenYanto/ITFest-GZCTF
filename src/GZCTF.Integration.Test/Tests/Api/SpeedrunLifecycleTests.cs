@@ -1,0 +1,222 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text.Json;
+using GZCTF.Integration.Test.Base;
+using GZCTF.Models;
+using GZCTF.Models.Data;
+using GZCTF.Models.Request.Account;
+using GZCTF.Models.Request.Edit;
+using GZCTF.Models.Request.Game;
+using GZCTF.Services;
+using GZCTF.Utils;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Xunit;
+
+namespace GZCTF.Integration.Test.Tests.Api;
+
+[Collection(nameof(IntegrationTestCollection))]
+public class SpeedrunLifecycleTests(GZCTFApplicationFactory factory)
+{
+    [Fact]
+    public async Task CurrentRound_ExposesOnlyEnabledCategoryChallenges_AndRejectsInactiveAccess()
+    {
+        const string playerPassword = "Speedrun@Player123";
+        const string adminPassword = "Speedrun@Admin123";
+        var user = await TestDataSeeder.CreateUserAsync(factory.Services, TestDataSeeder.RandomName(),
+            playerPassword);
+        var admin = await TestDataSeeder.CreateUserAsync(factory.Services, TestDataSeeder.RandomName(),
+            adminPassword, role: Role.Admin);
+        var team = await TestDataSeeder.CreateTeamAsync(factory.Services, user.Id,
+            $"Speedrun {TestDataSeeder.RandomName(8)}");
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Speedrun {TestDataSeeder.RandomName(8)}");
+        var active = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Enabled Current", "flag{enabled_current}");
+        var disabled = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Disabled Current", "flag{disabled_current}");
+        var inactive = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Enabled Inactive", "flag{enabled_inactive}");
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+            gameEntity.Mode = GameMode.Speedrun;
+            var disabledEntity = await context.GameChallenges.SingleAsync(item => item.Id == disabled.Id);
+            disabledEntity.IsEnabled = false;
+            var inactiveEntity = await context.GameChallenges.SingleAsync(item => item.Id == inactive.Id);
+            inactiveEntity.Category = ChallengeCategory.Crypto;
+            context.SpeedrunCategories.AddRange(
+                new SpeedrunCategory { GameId = game.Id, Category = ChallengeCategory.Misc },
+                new SpeedrunCategory { GameId = game.Id, Category = ChallengeCategory.Crypto });
+            context.SpeedrunRounds.Add(new SpeedrunRound
+            {
+                GameId = game.Id,
+                Category = ChallengeCategory.Misc,
+                Status = SpeedrunRoundStatus.Running,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                EndsAtUtc = DateTimeOffset.UtcNow.AddMinutes(10),
+                DurationSeconds = 660,
+                DurationMinutes = 11,
+                OvertimeSeconds = 300,
+                OvertimeMinutes = 5
+            });
+            await context.SaveChangesAsync();
+        }
+
+        await TestDataSeeder.JoinGameAsync(factory.Services, game.Id, team.Id, user.Id);
+        using var playerClient = factory.CreateClient();
+        await Login(playerClient, user.UserName, playerPassword);
+
+        var details = await playerClient.GetAsync($"/api/Game/{game.Id}/Details");
+        details.EnsureSuccessStatusCode();
+        Assert.Equal([active.Id], await ReadChallengeIds(details));
+
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await playerClient.GetAsync($"/api/Game/{game.Id}/Challenges/{disabled.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,
+            (await playerClient.GetAsync($"/api/Game/{game.Id}/Challenges/{inactive.Id}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await playerClient.PostAsJsonAsync($"/api/Game/{game.Id}/Challenges/{disabled.Id}",
+                new FlagSubmitModel { Flag = disabled.Flag })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,
+            (await playerClient.PostAsJsonAsync($"/api/Game/{game.Id}/Challenges/{inactive.Id}",
+                new FlagSubmitModel { Flag = inactive.Flag })).StatusCode);
+
+        using var adminClient = factory.CreateClient();
+        await Login(adminClient, admin.UserName, adminPassword);
+        var enableMutation = await adminClient.PutAsJsonAsync($"/api/Edit/Games/{game.Id}/Challenges/{active.Id}",
+            new ChallengeUpdateModel { IsEnabled = false });
+        Assert.Equal(HttpStatusCode.Conflict, enableMutation.StatusCode);
+        var categoryMutation = await adminClient.PutAsJsonAsync($"/api/Edit/Games/{game.Id}/Challenges/{active.Id}",
+            new ChallengeUpdateModel { Category = ChallengeCategory.Web });
+        Assert.Equal(HttpStatusCode.Conflict, categoryMutation.StatusCode);
+        var hintMutation = await adminClient.PutAsJsonAsync($"/api/Edit/Games/{game.Id}/Challenges/{active.Id}",
+            new ChallengeUpdateModel { Hints = ["unsafe"], SpeedrunHintReleaseSeconds = [0] });
+        Assert.Equal(HttpStatusCode.Conflict, hintMutation.StatusCode);
+        var flagMutation = await adminClient.PostAsJsonAsync($"/api/Edit/Games/{game.Id}/Challenges/{active.Id}/Flags",
+            new[] { new FlagCreateModel { Flag = "flag{unsafe}" } });
+        Assert.Equal(HttpStatusCode.Conflict, flagMutation.StatusCode);
+    }
+
+    [Fact]
+    public async Task SpinAndStart_RejectCategoryWithoutEnabledChallenges()
+    {
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Empty Speedrun {TestDataSeeder.RandomName(8)}");
+        var challenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Disabled Empty", "flag{disabled_empty}");
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+        gameEntity.Mode = GameMode.Speedrun;
+        var challengeEntity = await context.GameChallenges.SingleAsync(item => item.Id == challenge.Id);
+        challengeEntity.Category = ChallengeCategory.Web;
+        challengeEntity.IsEnabled = false;
+        context.SpeedrunCategories.Add(new SpeedrunCategory
+        {
+            GameId = game.Id,
+            Category = ChallengeCategory.Web,
+            Included = true,
+            Used = false
+        });
+        await context.SaveChangesAsync();
+
+        var speedrunService = scope.ServiceProvider.GetRequiredService<SpeedrunService>();
+        Assert.Null(await speedrunService.Spin(gameEntity, null));
+
+        var readyRound = new SpeedrunRound
+        {
+            GameId = game.Id,
+            Category = ChallengeCategory.Web,
+            Status = SpeedrunRoundStatus.Ready,
+            DurationSeconds = 300,
+            DurationMinutes = 5,
+            OvertimeSeconds = 60,
+            OvertimeMinutes = 1
+        };
+        context.SpeedrunRounds.Add(readyRound);
+        await context.SaveChangesAsync();
+        Assert.False(await speedrunService.Start(gameEntity, readyRound.Id));
+    }
+
+    [Fact]
+    public async Task ParallelStatePolling_ReleasesEachHintAndAnnouncementExactlyOnce()
+    {
+        var game = await TestDataSeeder.CreateGameAsync(factory.Services,
+            $"Hint Polling {TestDataSeeder.RandomName(8)}");
+        var challenge = await TestDataSeeder.CreateStaticChallengeAsync(factory.Services, game.Id,
+            "Polling Hints", "flag{polling_hints}");
+        int roundId;
+
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var gameEntity = await context.Games.SingleAsync(item => item.Id == game.Id);
+            gameEntity.Mode = GameMode.Speedrun;
+            var challengeEntity = await context.GameChallenges.SingleAsync(item => item.Id == challenge.Id);
+            challengeEntity.Hints = ["First concurrent hint", "Second concurrent hint"];
+            challengeEntity.SpeedrunHintReleaseSeconds = [0, 0];
+            challengeEntity.SpeedrunHintReleaseMinutes = [0, 0];
+            context.SpeedrunCategories.Add(new SpeedrunCategory
+            {
+                GameId = game.Id,
+                Category = ChallengeCategory.Misc,
+                Included = true,
+                Used = true
+            });
+            var round = new SpeedrunRound
+            {
+                GameId = game.Id,
+                Category = ChallengeCategory.Misc,
+                Status = SpeedrunRoundStatus.Running,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddSeconds(-10),
+                EndsAtUtc = DateTimeOffset.UtcNow.AddMinutes(10),
+                DurationSeconds = 610,
+                DurationMinutes = 10,
+                OvertimeSeconds = 60,
+                OvertimeMinutes = 1
+            };
+            context.SpeedrunRounds.Add(round);
+            await context.SaveChangesAsync();
+            roundId = round.Id;
+        }
+
+        using var client = factory.CreateClient();
+        var responses = await Task.WhenAll(Enumerable.Range(0, 16)
+            .Select(_ => client.GetAsync($"/api/Game/{game.Id}/Speedrun/State")));
+        Assert.All(responses, response => Assert.Equal(HttpStatusCode.OK, response.StatusCode));
+
+        await using var assertionScope = factory.Services.CreateAsyncScope();
+        var assertionContext = assertionScope.ServiceProvider.GetRequiredService<AppDbContext>();
+        var logs = await assertionContext.SpeedrunHintReleaseLogs.AsNoTracking()
+            .Where(log => log.RoundId == roundId && log.ChallengeId == challenge.Id).ToArrayAsync();
+        Assert.Equal(2, logs.Length);
+        Assert.Equal([0, 1], logs.Select(log => log.HintIndex).Order().ToArray());
+
+        var announcements = await assertionContext.GameNotices.AsNoTracking()
+            .Where(notice => notice.GameId == game.Id && notice.Values != null)
+            .ToArrayAsync();
+        Assert.Equal(2, announcements.Count(notice => notice.Values!.Any(value =>
+            value.StartsWith("Hint #", StringComparison.Ordinal))));
+    }
+
+    private static async Task Login(HttpClient client, string userName, string password)
+    {
+        var response = await client.PostAsJsonAsync("/api/Account/LogIn",
+            new LoginModel { UserName = userName, Password = password });
+        response.EnsureSuccessStatusCode();
+    }
+
+    private static async Task<int[]> ReadChallengeIds(HttpResponseMessage response)
+    {
+        await using var stream = await response.Content.ReadAsStreamAsync();
+        using var document = await JsonDocument.ParseAsync(stream);
+        return document.RootElement.GetProperty("challenges").EnumerateObject()
+            .SelectMany(category => category.Value.EnumerateArray())
+            .Select(challenge => challenge.GetProperty("id").GetInt32())
+            .ToArray();
+    }
+}

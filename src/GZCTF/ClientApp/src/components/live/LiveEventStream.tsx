@@ -3,19 +3,23 @@ import { LiveScoreboardEventModel, NoticeType } from '@Api'
 import classes from '@Styles/LiveScoreboard.module.css'
 
 const eventMeta = (event: LiveScoreboardEventModel) => {
-  if (event.type === NoticeType.FirstBlood) return ['BLOOD', classes.bloodEvent]
-  if (event.type === NoticeType.SecondBlood || event.type === NoticeType.ThirdBlood) return ['BLOOD', classes.bloodEvent]
-  if (event.message?.startsWith('Hint #')) return ['HINT', classes.hintEvent]
-  if (event.message?.includes('category selected')) return ['SPIN', classes.roundEvent]
-  if (event.message?.includes('round')) return ['ROUND', classes.roundEvent]
-  if (event.message?.includes('Overtime')) return ['OVERTIME', classes.bloodEvent]
-  return ['SYSTEM', classes.normalEvent]
+  if (event.type === NoticeType.FirstBlood) return ['First Blood', classes.bloodEvent]
+  if (event.type === NoticeType.SecondBlood) return ['Second Blood', classes.bloodEvent]
+  if (event.type === NoticeType.ThirdBlood) return ['Third Blood', classes.bloodEvent]
+  if (event.message?.startsWith('Hint #')) return ['Hint released', classes.hintEvent]
+  if (event.message?.toLowerCase().includes('category')) return ['Category', classes.roundEvent]
+  if (event.message?.toLowerCase().includes('overtime')) return ['Overtime', classes.bloodEvent]
+  if (event.message?.toLowerCase().includes('round')) return ['Round update', classes.roundEvent]
+  return ['Update', classes.normalEvent]
 }
 
-export const LiveEventStream: FC<{ events: LiveScoreboardEventModel[] }> = ({ events }) => <aside className={`${classes.hudPanel} ${classes.eventPanel}`}>
-  <div className={classes.panelHead}><div><b>EVENT STREAM</b><span>LIVE TELEMETRY</span></div><i className={classes.streamDot} /></div>
-  <div className={classes.eventRows}>{events.slice(0, 10).map((event) => {
+export const LiveEventStream: FC<{ events: LiveScoreboardEventModel[] }> = ({ events }) => <aside className={`${classes.waterPanel} ${classes.eventPanel}`}>
+  <header className={classes.panelHead}><div><span>Latest from the game</span><h2>Recent events</h2></div><i aria-hidden /></header>
+  <div className={classes.eventRows}>{events.slice(0, 8).map((event, index) => {
     const [label, color] = eventMeta(event)
-    return <div className={`${classes.eventRow} ${color}`} key={event.id}><span>[{label}]</span><p>{event.message}</p></div>
-  })}</div>
+    return <article className={`${classes.eventRow} ${color}`} key={event.id}>
+      <time>{String(index + 1).padStart(2, '0')}</time>
+      <div><b>{label}</b><p>{event.message}</p></div>
+    </article>
+  })}{!events.length && <div className={classes.emptyState}><i />Events will appear here</div>}</div>
 </aside>

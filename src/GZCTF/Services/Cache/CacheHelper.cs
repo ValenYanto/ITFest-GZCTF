@@ -67,8 +67,13 @@ public class CacheHelper(
         memoryCache.Remove(key);
     }
 
-    public async Task FlushScoreboardCache(int gameId, CancellationToken token) =>
+    public async Task FlushScoreboardCache(int gameId, CancellationToken token)
+    {
+        // Invalidate synchronously so the request immediately following a committed lifecycle
+        // mutation cannot observe the old challenge list while the asynchronous refresh is queued.
+        await RemoveAsync(CacheKey.ScoreBoard(gameId), token);
         await channelWriter.WriteAsync(ScoreboardCacheHandler.MakeCacheRequest(gameId), token);
+    }
 
     public async Task FlushRecentGamesCache(CancellationToken token) =>
         await channelWriter.WriteAsync(RecentGamesCacheHandler.MakeCacheRequest(), token);
@@ -250,6 +255,12 @@ public static class CacheKey
     /// Scoreboard cache
     /// </summary>
     public static string ScoreBoard(string id) => $"_ScoreBoard_{id}";
+
+    /// <summary>
+    /// Frozen public scoreboard snapshot
+    /// </summary>
+    public static string FrozenScoreBoard(int id, DateTimeOffset frozenAt) =>
+        $"_FrozenScoreBoard_{id}_{frozenAt.UtcTicks}";
 
     /// <summary>
     /// Game cache

@@ -276,6 +276,7 @@ export const ChallengePanel: FC = () => {
       )}
       {challenge?.id && (
         <GameChallengeModal
+          key={`${numId}-${challenge.id}`}
           gameId={numId}
           gameTitle={game?.title ?? ''}
           opened={detailOpened}

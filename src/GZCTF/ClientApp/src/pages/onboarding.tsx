@@ -118,13 +118,13 @@ const CaptainOnboardingPage: FC = () => {
           <Button
             variant="light"
             px="sm"
-            onClick={() => void navigator.clipboard.writeText(result.inviteCode)}
+            onClick={() => void navigator.clipboard.writeText(result.inviteCode ?? '')}
           >
             <Icon path={mdiClipboardOutline} size={1} />
           </Button>
         </Group>
         <Group gap="xs" justify="center">
-          {result.gameTitles.map((title) => <Badge key={title}>{title}</Badge>)}
+          {(result.gameTitles ?? []).map((title) => <Badge key={title}>{title}</Badge>)}
         </Group>
         <Button component={Link} to="/teams" fullWidth>
           Buka halaman tim
@@ -183,7 +183,7 @@ const CaptainOnboardingPage: FC = () => {
       <Stack gap={4} w="100%">
         <Text size="xs" c="dimmed">Game yang sudah di-whitelist:</Text>
         <Group gap="xs">
-          {(info.gameTitles.length > 0 ? info.gameTitles : [info.gameTitle])
+          {((info.gameTitles?.length ?? 0) > 0 ? info.gameTitles! : [info.gameTitle])
             .filter(Boolean)
             .map((title) => <Badge key={title}>{title}</Badge>)}
         </Group>

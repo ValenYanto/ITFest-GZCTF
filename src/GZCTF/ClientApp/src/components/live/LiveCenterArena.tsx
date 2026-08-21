@@ -1,39 +1,58 @@
-import { FC } from 'react'
+import { CSSProperties, FC } from 'react'
 import { ChallengeCategory, LiveScoreboardTeamModel, SpeedrunRoundModel, SpeedrunRoundStatus } from '@Api'
-import { LiveSpinWheel } from '@Components/live/LiveSpinWheel'
-import { LiveTeamOrbit } from '@Components/live/LiveTeamOrbit'
+import { LiveSpinPhase } from '@Components/live/types'
+import { useChallengeCategoryLabelMap } from '@Utils/Shared'
 import classes from '@Styles/LiveScoreboard.module.css'
 
 export const LiveCenterArena: FC<{
   round?: SpeedrunRoundModel | null
   remaining: ChallengeCategory[]
-  spinPhase: 'idle' | 'spinning' | 'revealed'
+  spinPhase: LiveSpinPhase
   teams: LiveScoreboardTeamModel[]
   attackingTeams: Set<number>
   bloodTeams: Set<number>
-}> = ({ round, remaining, spinPhase, teams, attackingTeams, bloodTeams }) => {
-  let eyebrow = 'SYSTEM STANDBY'
-  let title = <>WAITING<br />FOR NEXT SPIN</>
-  let detail = remaining.length ? `Remaining categories: ${remaining.join(' • ')}` : 'All configured categories have been used'
+  frozen?: boolean
+}> = ({ round, remaining, spinPhase, teams, attackingTeams, bloodTeams, frozen }) => {
+  const categoryMap = useChallengeCategoryLabelMap()
+  const categoryVisual = round?.category ? categoryMap.get(round.category) : undefined
+  const categoryStyle = categoryVisual ? {
+    '--category-color': categoryVisual.colors[6],
+    '--category-glow': categoryVisual.colors[4],
+  } as CSSProperties : undefined
+  let label = 'The sunken championship'
+  let title = 'Awaiting the next descent'
+  let detail = remaining.length ? `${remaining.length} categories remain beneath the surface` : 'Every category has been played'
 
   if (spinPhase === 'spinning') {
-    eyebrow = 'ROLE SELECTION'; title = <>SPINNING...</>; detail = 'Target acquisition in progress'
+    label = 'The current is choosing'
+    title = 'Category vortex'
+    detail = 'One medallion will rise from the deep'
   } else if (round?.status === SpeedrunRoundStatus.Ready) {
-    eyebrow = 'CATEGORY LOCKED'; title = <>{String(round.category)}</>; detail = 'Waiting for admin to start...'
+    label = 'The next trial'
+    title = String(round.category)
+    detail = 'Teams take their places around the altar'
   } else if (round?.status === SpeedrunRoundStatus.Running) {
-    eyebrow = 'TARGET LOCKED'; title = <>{String(round.category)}</>; detail = 'Scores count toward the main scoreboard'
+    label = 'Current category'
+    title = String(round.category)
+    detail = 'Every solve awakens the central pearl'
   } else if (round?.status === SpeedrunRoundStatus.Overtime) {
-    eyebrow = 'OVERCLOCK TARGET'; title = <>{String(round.category)}</>; detail = 'UNSOLVED CHALLENGES REMAIN'
+    label = 'Overtime below the surface'
+    title = String(round.category)
+    detail = 'The colosseum stays open until the final challenge falls'
   }
 
-  return <section className={`${classes.centerArena} ${round?.status === SpeedrunRoundStatus.Overtime ? classes.overclock : ''}
-    ${spinPhase === 'spinning' ? classes.arenaSpinning : ''}`}>
-    <div className={classes.radarRingOne} /><div className={classes.radarRingTwo} /><div className={classes.radarSweep} />
-    <LiveTeamOrbit teams={teams} attackingTeams={attackingTeams} bloodTeams={bloodTeams} />
-    <LiveSpinWheel categories={remaining} phase={spinPhase} selected={round?.category} />
-    <div className={classes.centerCore}>
-      <div className={classes.coreHexagon} />
-      <div className={classes.centerCopy}><span>{eyebrow}</span><h1>{title}</h1><p>{detail}</p></div>
+  const attacking = attackingTeams.size > 0
+  const blood = bloodTeams.size > 0
+
+  return <section className={`${classes.centerArena} ${spinPhase === 'spinning' ? classes.arenaSpinning : ''} ${spinPhase === 'revealed' ? classes.arenaRevealed : ''} ${round?.status === SpeedrunRoundStatus.Running || round?.status === SpeedrunRoundStatus.Overtime ? classes.arenaActive : ''} ${attacking ? classes.arenaImpact : ''} ${blood ? classes.arenaBloodImpact : ''}`} aria-label="Team arena">
+    <div className={classes.roundReadout} style={categoryStyle}>
+      <span>{label}</span>
+      <h1>{title}</h1>
+      <p>{detail}</p>
+      {attacking && <b className={blood ? classes.bloodSolveLabel : ''}>{blood ? 'Blood current' : 'Solve current'}</b>}
+    </div>
+    <div className={classes.srOnly}>
+      {teams.slice(0, 10).map(team => `${team.rank}. ${team.name}, ${frozen ? '???' : team.score} points`).join('. ')}
     </div>
   </section>
 }

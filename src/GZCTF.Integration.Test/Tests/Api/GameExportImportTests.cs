@@ -387,6 +387,15 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Content = "# Test Game\n\nThis is a **complex** game with all features enabled.\n\n## Features\n- Multiple divisions\n- Various challenge types\n- Blood bonus\n- Writeup requirements",
             Hidden = false,
             PracticeMode = false,
+            Mode = GameMode.Speedrun,
+            SpeedrunDefaultRoundDurationSeconds = 725,
+            SpeedrunDefaultRoundDurationMinutes = 12,
+            SpeedrunOvertimeSeconds = 95,
+            SpeedrunOvertimeMinutes = 1,
+            SpeedrunAllowManualExtend = false,
+            SpeedrunHideInactiveChallenges = true,
+            SpeedrunEmergencyHintEnabled = true,
+            SpeedrunEmergencyHintText = "Imported emergency hint",
             AcceptWithoutReview = true,
             InviteCode = $"TEST{Guid.NewGuid().ToString("N")[..8]}",
             TeamMemberCountLimit = 5,
@@ -430,6 +439,8 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Category = ChallengeCategory.Crypto,
             Type = ChallengeType.StaticAttachment,
             Hints = ["The offset is a prime number", "ROT13 is your friend"],
+            SpeedrunHintReleaseSeconds = [0, 45],
+            SpeedrunHintReleaseMinutes = [0, 0],
             IsEnabled = true,
             SubmissionLimit = 0,
             OriginalScore = 1000,
@@ -455,6 +466,8 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Category = ChallengeCategory.Web,
             Type = ChallengeType.StaticContainer,
             Hints = ["Check the login form", "UNION SELECT is powerful"],
+            SpeedrunHintReleaseSeconds = [5, 65],
+            SpeedrunHintReleaseMinutes = [0, 1],
             IsEnabled = true,
             SubmissionLimit = 10,
             OriginalScore = 1500,
@@ -485,6 +498,8 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Category = ChallengeCategory.Pwn,
             Type = ChallengeType.DynamicContainer,
             Hints = ["Check the stack carefully", "NX is disabled"],
+            SpeedrunHintReleaseSeconds = [10, 90],
+            SpeedrunHintReleaseMinutes = [0, 1],
             IsEnabled = true,
             SubmissionLimit = 50,
             OriginalScore = 2000,
@@ -509,6 +524,8 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Category = ChallengeCategory.Reverse,
             Type = ChallengeType.StaticAttachment,
             Hints = ["Start with strings", "Check the resources", "Don't forget the encryption key"],
+            SpeedrunHintReleaseSeconds = [0, 30, 120],
+            SpeedrunHintReleaseMinutes = [0, 0, 2],
             IsEnabled = true,
             SubmissionLimit = 0,
             OriginalScore = 1200,
@@ -603,6 +620,11 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
         Assert.Equal(originalGame.Content, transferGame.Content);
         Assert.Equal(originalGame.Hidden, transferGame.Hidden);
         Assert.Equal(originalGame.PracticeMode, transferGame.PracticeMode);
+        Assert.Equal(GameMode.Speedrun, transferGame.Mode);
+        Assert.NotNull(transferGame.Speedrun);
+        Assert.Equal(725, transferGame.Speedrun.DefaultRoundDurationSeconds);
+        Assert.Equal(95, transferGame.Speedrun.OvertimeSeconds);
+        Assert.False(transferGame.Speedrun.AllowManualExtend);
         Assert.Equal(originalGame.InviteCode, transferGame.InviteCode);
         Assert.NotNull(transferGame.BloodBonus);
         Assert.Equal(50, transferGame.BloodBonus.First);
@@ -631,6 +653,7 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
         Assert.Equal(ChallengeType.StaticAttachment, cryptoChallenge.Type);
         Assert.NotNull(cryptoChallenge.Hints);
         Assert.Equal(2, cryptoChallenge.Hints.Count);
+        Assert.Equal([0, 45], cryptoChallenge.SpeedrunHintReleaseSeconds);
         Assert.Equal(1000, cryptoChallenge.Scoring.Original);
 
         var pwnChallenge = transferChallenges.FirstOrDefault(c => c.Title == "Pwn The Binary");
@@ -678,6 +701,14 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
         // - InviteCode = empty (generate new code)
         Assert.True(importedGame.Hidden); // Import as hidden for safety
         Assert.False(importedGame.PracticeMode); // Import with practice mode disabled for safety
+        Assert.Equal(GameMode.Speedrun, importedGame.Mode);
+        Assert.Equal(originalGame.SpeedrunDefaultRoundDurationSeconds,
+            importedGame.SpeedrunDefaultRoundDurationSeconds);
+        Assert.Equal(originalGame.SpeedrunOvertimeSeconds, importedGame.SpeedrunOvertimeSeconds);
+        Assert.Equal(originalGame.SpeedrunAllowManualExtend, importedGame.SpeedrunAllowManualExtend);
+        Assert.Equal(originalGame.SpeedrunHideInactiveChallenges, importedGame.SpeedrunHideInactiveChallenges);
+        Assert.Equal(originalGame.SpeedrunEmergencyHintEnabled, importedGame.SpeedrunEmergencyHintEnabled);
+        Assert.Equal(originalGame.SpeedrunEmergencyHintText, importedGame.SpeedrunEmergencyHintText);
 
         Assert.Equal(originalGame.AcceptWithoutReview, importedGame.AcceptWithoutReview);
         Assert.Equal(originalGame.TeamMemberCountLimit, importedGame.TeamMemberCountLimit);
@@ -724,6 +755,9 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
             Assert.Equal(originalChallenge.MinScoreRate, importedChallenge.MinScoreRate);
             Assert.Equal(originalChallenge.Difficulty, importedChallenge.Difficulty);
             Assert.Equal(originalChallenge.FlagTemplate, importedChallenge.FlagTemplate);
+            Assert.False(importedChallenge.IsEnabled);
+            Assert.Equal(originalChallenge.SpeedrunHintReleaseSeconds,
+                importedChallenge.SpeedrunHintReleaseSeconds);
 
             // Validate hints
             if (originalChallenge.Hints is not null)
@@ -744,6 +778,13 @@ public class GameExportImportTests(GZCTFApplicationFactory factory, ITestOutputH
                 Assert.Equal(originalChallenge.ExposePort, importedChallenge.ExposePort);
             }
         }
+
+        var categories = await context.SpeedrunCategories.AsNoTracking()
+            .Where(category => category.GameId == importedGameId).ToArrayAsync();
+        Assert.Equal(importedGame.Challenges.Select(challenge => challenge.Category).Distinct().Count(),
+            categories.Length);
+        Assert.All(categories, category => Assert.False(category.Used));
+        Assert.False(await context.SpeedrunRounds.AnyAsync(round => round.GameId == importedGameId));
     }
 
     /// <summary>

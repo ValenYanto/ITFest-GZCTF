@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Autocomplete,
   Badge,
   Button,
   Group,
@@ -12,9 +11,8 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core'
-import { useInputState } from '@mantine/hooks'
 import { modals } from '@mantine/modals'
-import { notifications, showNotification } from '@mantine/notifications'
+import { showNotification } from '@mantine/notifications'
 import {
   mdiCheck,
   mdiClose,
@@ -72,9 +70,9 @@ const WhitelistPage: FC = () => {
     if (!query.trim()) return
     setSearching(true)
     try {
-      const res = await api.admin.adminSearchWhitelistTeams(numId, { query })
+      const res = await api.admin.adminSearchTeamsForWhitelist(numId, { query })
       const existingIds = new Set(whitelist.map((w) => w.teamId))
-      setSearchResults((res.data ?? []).filter((t) => !existingIds.has(t.id!)))
+      setSearchResults((res.data ?? []).filter((team) => !existingIds.has(team.id!)))
     } catch (e) {
       showErrorMsg(e, t)
     } finally {
@@ -171,7 +169,7 @@ const WhitelistPage: FC = () => {
                   </Table.Td>
                   <Table.Td>{entry.captainEmail ?? '-'}</Table.Td>
                   <Table.Td>
-                    <Badge color={sourceColors[entry.source] ?? 'gray'} variant="light">
+                    <Badge color={entry.source ? sourceColors[entry.source] : 'gray'} variant="light">
                       {entry.source === WhitelistSource.BulkOnboarding
                         ? 'Bulk Onboarding'
                         : entry.source === WhitelistSource.ManualWhitelist
@@ -185,7 +183,7 @@ const WhitelistPage: FC = () => {
                       <ActionIcon
                         color="red"
                         variant="subtle"
-                        onClick={() => onRemoveWhitelist(entry.teamId, entry.teamName)}
+                        onClick={() => entry.teamId !== undefined && onRemoveWhitelist(entry.teamId, entry.teamName ?? '')}
                       >
                         <Icon path={mdiDeleteOutline} size={0.9} />
                       </ActionIcon>

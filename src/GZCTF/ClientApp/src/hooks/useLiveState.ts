@@ -6,7 +6,7 @@ export const useLiveState = (gameId: number) => {
   const [now, setNow] = useState(Date.now())
 
   const refresh = useCallback(async () => {
-    const next = (await api.game.gameGetLiveScoreboard(gameId)).data
+    const next = (await api.game.gameLiveScoreboard(gameId)).data
     setState(next)
   }, [gameId])
 

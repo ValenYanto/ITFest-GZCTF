@@ -7,6 +7,7 @@
     "dev": "vite",
     "lint": "oxlint --fix",
     "check": "tsc --noEmit --strict --project tsconfig.app.json",
+    "test:challenge-modal": "node --experimental-strip-types tests/ChallengeModalState.test.ts",
     "build": "pnpm check && vite build",
     "preview": "vite preview",
     "prettier": "prettier --write src --write plugins --write *.mjs --write *.mts",
@@ -29,6 +30,8 @@
     "@mdi/js": "^7.4.47",
     "@mdi/react": "^1.6.1",
     "@microsoft/signalr": "^10.0.0",
+    "@react-three/drei": "^10.7.8",
+    "@react-three/fiber": "^9.7.0",
     "@shikijs/colorized-brackets": "^4.2.0",
     "@shikijs/langs": "^4.2.0",
     "@shikijs/themes": "^4.2.0",
@@ -58,7 +61,8 @@
     "react-pdf": "^10.4.1",
     "react-router": "^7.17.0",
     "shiki": "^4.2.0",
-    "swr": "^2.4.1"
+    "swr": "^2.4.1",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
@@ -69,6 +73,7 @@
     "@types/prismjs": "^1.26.6",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^6.0.2",
     "babel-plugin-prismjs": "^2.1.0",
     "esbuild": "^0.28.0",

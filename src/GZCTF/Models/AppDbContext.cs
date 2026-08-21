@@ -101,6 +101,7 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) :
             entity.Property(e => e.SpeedrunHideInactiveChallenges).HasDefaultValue(true);
             entity.Property(e => e.SpeedrunEmergencyHintEnabled).HasDefaultValue(true);
             entity.Property(e => e.SpeedrunEmergencyHintText).HasDefaultValue(Game.DefaultSpeedrunEmergencyHintText);
+            entity.Property(e => e.ScoreboardFrozen).HasDefaultValue(false);
             entity.Property(e => e.BloodNotificationEnabled)
                 .HasDefaultValue(false);
 

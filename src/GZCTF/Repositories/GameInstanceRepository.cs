@@ -21,6 +21,11 @@ public class GameInstanceRepository(
     {
         await using var transaction = await Context.Database.BeginTransactionAsync(token);
 
+        // Loading a dynamic instance mutates flag allocation state. Serialize the first load for
+        // this participation/challenge pair so parallel detail requests cannot dispatch twice.
+        await Context.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock({0}, {1})",
+            [part.Id, challengeId], cancellationToken: token);
+
         var instance = await Context.GameInstances
             .Include(i => i.FlagContext)
             .Where(e => e.ChallengeId == challengeId && e.Participation == part)
@@ -378,7 +383,8 @@ public class GameInstanceRepository(
             {
                 ParticipationId = submission.ParticipationId,
                 ChallengeId = submission.ChallengeId,
-                SubmissionId = submission.Id
+                SubmissionId = submission.Id,
+                AcceptedTimeUtc = DateTimeOffset.UtcNow
             });
 
             await SaveAsync(token);

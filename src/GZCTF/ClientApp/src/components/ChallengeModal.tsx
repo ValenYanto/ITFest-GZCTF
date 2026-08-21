@@ -1,4 +1,5 @@
 import {
+  Alert,
   Button,
   Divider,
   FileInput,
@@ -14,7 +15,14 @@ import {
   ScrollAreaAutosize,
   Input,
 } from '@mantine/core'
-import { mdiFileUploadOutline, mdiLightbulbOnOutline, mdiOpenInNew, mdiPackageVariantClosed } from '@mdi/js'
+import {
+  mdiAlertCircleOutline,
+  mdiFileUploadOutline,
+  mdiLightbulbOnOutline,
+  mdiOpenInNew,
+  mdiPackageVariantClosed,
+  mdiRefresh,
+} from '@mdi/js'
 import { Icon } from '@mdi/react'
 import dayjs from 'dayjs'
 import duration from 'dayjs/plugin/duration'
@@ -80,6 +88,11 @@ const ChallengeDeadlineNotice: FC<ChallengeDeadlineNoticeProps> = ({ deadline, o
 
 export interface ChallengeModalProps extends ModalProps {
   challenge?: ChallengeDetailModel
+  loading?: boolean
+  errorMessage?: string
+  onRetry?: () => void
+  fallbackTitle?: string
+  fallbackScore?: number
   cateData: ChallengeCategoryItemProps
   solved?: boolean
   disabled?: boolean
@@ -105,6 +118,11 @@ export interface ChallengeModalProps extends ModalProps {
 export const ChallengeModal: FC<ChallengeModalProps> = (props) => {
   const {
     challenge,
+    loading,
+    errorMessage,
+    onRetry,
+    fallbackTitle,
+    fallbackScore,
     cateData,
     solved,
     disabled,
@@ -158,11 +176,11 @@ export const ChallengeModal: FC<ChallengeModalProps> = (props) => {
         <Group wrap="nowrap" gap="sm" w="calc(100% - 6.75rem)">
           {cateData && <Icon path={cateData.icon} size={1.2} color={theme.colors[cateData.color][5]} />}
           <Title order={4} lineClamp={1}>
-            {challenge?.title ?? ''}
+            {challenge?.title ?? fallbackTitle ?? ''}
           </Title>
         </Group>
         <Text miw="6rem" fw="bold" ff="monospace" ta="right">
-          {challenge?.score ?? 0} pts
+          {challenge?.score ?? fallbackScore ?? 0} pts
         </Text>
       </Group>
       <Divider size="md" color={cateData?.color} />
@@ -171,9 +189,25 @@ export const ChallengeModal: FC<ChallengeModalProps> = (props) => {
 
   const content = (
     <ScrollAreaAutosize mah="52vh" maw="100%" scrollbars="y" scrollbarSize={6} type="scroll">
-      {challenge?.content === undefined ? (
+      {loading ? (
         <ContentPlaceholder />
-      ) : (
+      ) : errorMessage ? (
+        <Alert
+          color="red"
+          variant="light"
+          title="Challenge could not be loaded"
+          icon={<Icon path={mdiAlertCircleOutline} size={1} />}
+        >
+          <Stack gap="sm">
+            <Text size="sm">{errorMessage}</Text>
+            {onRetry && (
+              <Button variant="light" color="red" onClick={onRetry} leftSection={<Icon path={mdiRefresh} size={0.9} />}>
+                Retry
+              </Button>
+            )}
+          </Stack>
+        </Alert>
+      ) : challenge ? (
         <>
           <Markdown source={challenge.content ?? ''} />
           {challenge.hints && challenge.hints.length > 0 && (
@@ -187,7 +221,7 @@ export const ChallengeModal: FC<ChallengeModalProps> = (props) => {
             </Stack>
           )}
         </>
-      )}
+      ) : null}
     </ScrollAreaAutosize>
   )
 
@@ -364,7 +398,7 @@ export const ChallengeModal: FC<ChallengeModalProps> = (props) => {
           <Modal.Title>{title}</Modal.Title>
         </Modal.Header>
         <Modal.Body>{content}</Modal.Body>
-        {footer}
+        {!loading && !errorMessage && challenge && footer}
       </Modal.Content>
     </Modal.Root>
   )

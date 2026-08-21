@@ -35,6 +35,16 @@ public class TransferGame : IValidatableObject
     public bool PracticeMode { get; set; } = true;
 
     /// <summary>
+    /// Competition mode. Runtime round state is intentionally not transferred.
+    /// </summary>
+    public GameMode Mode { get; set; } = GameMode.Jeopardy;
+
+    /// <summary>
+    /// Speedrun configuration. Only meaningful when Mode is Speedrun.
+    /// </summary>
+    public SpeedrunTransferSection? Speedrun { get; set; }
+
+    /// <summary>
     /// Accept teams without review
     /// </summary>
     public bool AcceptWithoutReview { get; set; }
@@ -105,6 +115,22 @@ public class TransferGame : IValidatableObject
 
         // Note: BloodBonus range validation (0-1023) is handled by [Range] attributes on BloodBonusSection
     }
+}
+
+public class SpeedrunTransferSection
+{
+    [Range(1, 86400)]
+    public int DefaultRoundDurationSeconds { get; set; } = 1800;
+
+    [Range(0, 86400)]
+    public int OvertimeSeconds { get; set; } = 300;
+
+    public bool AllowManualExtend { get; set; } = true;
+    public bool HideInactiveChallenges { get; set; } = true;
+    public bool EmergencyHintEnabled { get; set; } = true;
+
+    [MaxLength(1000)]
+    public string EmergencyHintText { get; set; } = Game.DefaultSpeedrunEmergencyHintText;
 }
 
 

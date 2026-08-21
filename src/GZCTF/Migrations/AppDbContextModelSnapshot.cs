@@ -460,6 +460,9 @@ namespace GZCTF.Migrations
                     b.Property<int>("ParticipationId")
                         .HasColumnType("integer");
 
+                    b.Property<DateTimeOffset>("AcceptedTimeUtc")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("ChallengeId")
                         .HasColumnType("integer");
 
@@ -616,6 +619,14 @@ namespace GZCTF.Migrations
 
                     b.Property<bool>("PracticeMode")
                         .HasColumnType("boolean");
+
+                    b.Property<DateTimeOffset?>("ScoreboardFreezeTimeUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("ScoreboardFrozen")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("PrivateKey")
                         .IsRequired()
@@ -1100,6 +1111,9 @@ namespace GZCTF.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTimeOffset?>("AcceptedTimeUtc")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int?>("DivisionId")
                         .HasColumnType("integer");

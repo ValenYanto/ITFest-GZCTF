@@ -67,29 +67,53 @@ public class GameController(
         if (game is null)
             return NotFound(new RequestResponse("Game not found.", StatusCodes.Status404NotFound));
 
-        var scoreboard = await gameRepository.TryGetScoreboard(id, token) ?? await gameRepository.GetScoreboard(game, token);
+        var scoreboard = game.ScoreboardFrozen
+            ? await gameRepository.GetFrozenScoreboard(game, token)
+            : await gameRepository.TryGetScoreboard(id, token) ?? await gameRepository.GetScoreboard(game, token);
+        var teamIds = await dbContext.Participations.AsNoTracking()
+            .Where(participation => participation.GameId == id &&
+                                    participation.Status == ParticipationStatus.Accepted)
+            .Select(participation => new { participation.Team.Name, participation.TeamId })
+            .ToDictionaryAsync(team => team.Name, team => team.TeamId, token);
         (var notices, _) = await noticeRepository.GetLatestNotices(id, token);
         return Ok(new LiveScoreboardStateModel
         {
             GameId = id,
             GameTitle = game.Title,
             GameMode = game.Mode,
+            ScoreboardFrozen = game.ScoreboardFrozen,
             Config = LiveScoreboardConfigModel.FromConfig(game.LiveScoreboardConfig),
             SpeedrunState = await speedrunService.GetState(id, token),
-            TopTeams = scoreboard.ItemList.OrderBy(team => team.Rank).Take(10).Select(team => new LiveScoreboardTeamModel
+            TopTeams = scoreboard.ItemList.OrderBy(team => team.Rank).Select(team => new LiveScoreboardTeamModel
             {
-                Id = team.Id, Rank = team.Rank, Name = team.Name, Score = team.Score, SolvedCount = team.SolvedCount
+                Id = team.Id,
+                Rank = team.Rank,
+                Name = game.ScoreboardFrozen ? "????" : team.Name,
+                Score = game.ScoreboardFrozen ? 0 : team.Score,
+                SolvedCount = game.ScoreboardFrozen ? 0 : team.SolvedCount
             }).ToArray(),
             RecentEvents = notices.OrderByDescending(notice => notice.PublishTimeUtc).Take(20).Select(notice =>
-                new LiveScoreboardEventModel
+            {
+                var blood = notice.Type is NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood;
+                var teamName = blood ? notice.Values?.ElementAtOrDefault(0) : null;
+                var challengeTitle = blood ? notice.Values?.ElementAtOrDefault(1) : null;
+                var hideTeam = blood && ShouldMaskBloodNotice(game, notice);
+                var displayedTeamName = hideTeam ? "????" : teamName;
+                return new LiveScoreboardEventModel
                 {
-                    Id = $"notice-{notice.Id}", Type = notice.Type, CreatedAt = notice.PublishTimeUtc,
-                    Message = notice.Values is { Count: > 0 } ? string.Join(" ", notice.Values) : notice.Type.ToString(),
-                    TeamName = notice.Type is NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood
-                        ? notice.Values?.ElementAtOrDefault(0) : null,
-                    ChallengeTitle = notice.Type is NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood
-                        ? notice.Values?.ElementAtOrDefault(1) : null
-                }).ToArray()
+                    Id = $"notice-{notice.Id}",
+                    Type = notice.Type,
+                    CreatedAt = notice.PublishTimeUtc,
+                    TeamId = teamName is not null && teamIds.TryGetValue(teamName, out var teamId) ? teamId : null,
+                    TeamName = blood ? displayedTeamName : null,
+                    ChallengeTitle = challengeTitle,
+                    Message = blood
+                        ? $"{displayedTeamName} solved {challengeTitle}"
+                        : notice.Values is { Count: > 0 }
+                            ? string.Join(" ", notice.Values)
+                            : notice.Type.ToString()
+                };
+            }).ToArray()
         });
     }
     /// <summary>
@@ -406,7 +430,18 @@ public class GameController(
     [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
     public async Task<IActionResult> Scoreboard([FromRoute] int id, CancellationToken token)
     {
-        var scoreboard = await gameRepository.TryGetScoreboard(id, token);
+        var game = await gameRepository.GetGameById(id, token);
+
+        if (game is null)
+            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_NotFound)],
+                StatusCodes.Status404NotFound));
+
+        if (DateTimeOffset.UtcNow < game.StartTimeUtc)
+            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Game_NotStarted)]));
+
+        var scoreboard = game.ScoreboardFrozen
+            ? await gameRepository.GetFrozenScoreboard(game, token)
+            : await gameRepository.TryGetScoreboard(id, token);
         string eTag;
         if (scoreboard is not null)
         {
@@ -416,15 +451,6 @@ public class GameController(
 
             return Ok(scoreboard);
         }
-
-        var game = await gameRepository.GetGameById(id, token);
-
-        if (game is null)
-            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_NotFound)],
-                StatusCodes.Status404NotFound));
-
-        if (DateTimeOffset.UtcNow < game.StartTimeUtc)
-            return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Game_NotStarted)]));
 
         scoreboard = await gameRepository.GetScoreboard(game, token);
         var lastModified = scoreboard.UpdateTimeUtc;
@@ -462,10 +488,16 @@ public class GameController(
             return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Game_NotStarted)]));
 
         (var data, var lastModified) = await noticeRepository.GetLatestNotices(game.Id, token);
-        var eTag = $"\"{game.Id}-{lastModified.ToUnixTimeSeconds():X}-{skip}-{count}\"";
+        var freezeTicks = game.ScoreboardFreezeTimeUtc?.UtcTicks ?? 0;
+        var eTag =
+            $"\"{game.Id}-{lastModified.ToUnixTimeSeconds():X}-{skip}-{count}-{game.ScoreboardFrozen}-{freezeTicks:X}\"";
         if (ContextHelper.IsNotModified(Request, Response, eTag, lastModified))
             return StatusCode(StatusCodes.Status304NotModified);
-        return Ok(data.Skip(skip).Take(count));
+
+        var notices = data.Skip(skip).Take(count);
+        return Ok(game.ScoreboardFrozen
+            ? notices.Select(notice => ShouldMaskBloodNotice(game, notice) ? MaskBloodNotice(notice) : notice)
+            : notices);
     }
 
     /// <summary>
@@ -1023,6 +1055,15 @@ public class GameController(
         var instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
 
         if (instance is null)
+        {
+            // Imported/cloned games may contain an enabled challenge whose lifecycle rows were never
+            // reconciled. Repair only the missing database row, then let GetInstance perform the
+            // normal first-load lifecycle (including dynamic flag allocation) exactly once.
+            await challengeRepository.ReconcileInstances(id, [challengeId], token);
+            instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
+        }
+
+        if (instance is null)
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_ChallengeNotFound)],
                 StatusCodes.Status404NotFound));
 
@@ -1137,8 +1178,18 @@ public class GameController(
                 await gameInstanceRepository.GetInstanceForSubmission(context.Participation!, challengeId, token);
 
             if (instance is null)
+            {
+                await challengeRepository.ReconcileInstances(id, [challengeId], token);
+                instance = await gameInstanceRepository.GetInstanceForSubmission(
+                    context.Participation!, challengeId, token);
+            }
+
+            if (instance is null)
                 return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_ChallengeNotFound)],
                     StatusCodes.Status404NotFound));
+
+            if (!instance.Challenge.IsEnabled)
+                return BadRequest(new RequestResponse("Challenge is disabled and cannot receive submissions."));
 
             if (context.Game.Mode == GameMode.Jeopardy && instance.Challenge.RequireSolverUpload &&
                 solverFile is null)
@@ -1371,6 +1422,10 @@ public class GameController(
         if (context.Result is not null)
             return context.Result;
 
+        if (!await speedrunService.CanAccessChallenge(context.Game!, challengeId, token))
+            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
+                StatusCodes.Status404NotFound));
+
         var permission = await divisionRepository.GetPermission(context.Participation?.DivisionId, challengeId, token);
 
         if (!permission.HasFlag(GamePermission.ViewChallenge))
@@ -1378,6 +1433,11 @@ public class GameController(
                 StatusCodes.Status404NotFound));
 
         var instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
+        if (instance is null)
+        {
+            await challengeRepository.ReconcileInstances(id, [challengeId], token);
+            instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
+        }
 
         if (instance is null || !instance.Challenge.IsEnabled)
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
@@ -1439,6 +1499,10 @@ public class GameController(
         if (context.Result is not null)
             return context.Result;
 
+        if (!await speedrunService.CanAccessChallenge(context.Game!, challengeId, token))
+            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
+                StatusCodes.Status404NotFound));
+
         var instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
 
         if (instance is null || !instance.Challenge.IsEnabled)
@@ -1489,6 +1553,10 @@ public class GameController(
 
         if (context.Result is not null)
             return context.Result;
+
+        if (!await speedrunService.CanAccessChallenge(context.Game!, challengeId, token))
+            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
+                StatusCodes.Status404NotFound));
 
         var instance = await gameInstanceRepository.GetInstance(context.Participation!, challengeId, token);
 
@@ -1572,6 +1640,25 @@ public class GameController(
 
     private static string GameETag(int gameId, DateTimeOffset lastModified) =>
         $"\"{gameId}-{lastModified.ToUnixTimeSeconds():X}\"";
+
+    private static bool ShouldMaskBloodNotice(Game game, GameNotice notice) =>
+        game.ScoreboardFrozen &&
+        notice.Type is NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood &&
+        (game.ScoreboardFreezeTimeUtc is null || notice.PublishTimeUtc >= game.ScoreboardFreezeTimeUtc);
+
+    private static GameNotice MaskBloodNotice(GameNotice notice)
+    {
+        if (notice.Type is not (NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood))
+            return notice;
+
+        return new()
+        {
+            Id = notice.Id,
+            Type = notice.Type,
+            PublishTimeUtc = notice.PublishTimeUtc,
+            Values = ["Anonymous", notice.Values?.ElementAtOrDefault(1) ?? string.Empty]
+        };
+    }
 
     private static Dictionary<ChallengeCategory, IEnumerable<ChallengeInfo>> FilterChallengesByPermission(
         Dictionary<ChallengeCategory, IEnumerable<ChallengeInfo>> challenges,

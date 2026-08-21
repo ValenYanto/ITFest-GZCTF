@@ -15,6 +15,7 @@ public class GameImportService(
     IDivisionRepository divisionRepository,
     IBlobRepository blobRepository,
     IBlobStorage blobStorage,
+    SpeedrunService speedrunService,
     ILogger<GameImportService> logger)
 {
     /// <summary>
@@ -219,6 +220,18 @@ public class GameImportService(
                 ContainerCountLimit = context.Game.ContainerCountLimit,
                 InviteCode = string.Empty, // Generate new invite code
                 PracticeMode = false,
+                Mode = context.Game.Mode,
+                SpeedrunDefaultRoundDurationSeconds =
+                    context.Game.Speedrun?.DefaultRoundDurationSeconds ?? 1800,
+                SpeedrunOvertimeSeconds = context.Game.Speedrun?.OvertimeSeconds ?? 300,
+                SpeedrunDefaultRoundDurationMinutes =
+                    (context.Game.Speedrun?.DefaultRoundDurationSeconds ?? 1800) / 60,
+                SpeedrunOvertimeMinutes = (context.Game.Speedrun?.OvertimeSeconds ?? 300) / 60,
+                SpeedrunAllowManualExtend = context.Game.Speedrun?.AllowManualExtend ?? true,
+                SpeedrunHideInactiveChallenges = context.Game.Speedrun?.HideInactiveChallenges ?? true,
+                SpeedrunEmergencyHintEnabled = context.Game.Speedrun?.EmergencyHintEnabled ?? true,
+                SpeedrunEmergencyHintText = context.Game.Speedrun?.EmergencyHintText ??
+                                            Game.DefaultSpeedrunEmergencyHintText,
                 Hidden = true // Import as hidden by default
             };
 
@@ -252,6 +265,11 @@ public class GameImportService(
                 var challenge = await ImportChallengeAsync(game, transferChallenge, context, ct);
                 context.ChallengeIdMap[transferChallenge.Id] = challenge.Id;
             }
+
+            // Runtime rounds/categories are never cloned. Rebuild a clean category pool from
+            // imported challenge definitions, with every category unused.
+            if (game.Mode == GameMode.Speedrun)
+                await speedrunService.RefreshCategories(game.Id, ct);
 
             // Import division permissions and challenge-specific configurations
             await ImportDivisionPermissionsAsync(game, context, ct);
@@ -416,8 +434,13 @@ public class GameImportService(
             FileName = transferChallenge.Container?.FileName,
 
             // Hints
-            Hints = transferChallenge.Hints
+            Hints = transferChallenge.Hints,
+            SpeedrunHintReleaseSeconds = transferChallenge.SpeedrunHintReleaseSeconds ??
+                transferChallenge.SpeedrunHintReleaseMinutes?.Select(value => value * 60).ToList() ??
+                Enumerable.Repeat(0, transferChallenge.Hints?.Count ?? 0).ToList()
         };
+        challenge.SpeedrunHintReleaseMinutes = challenge.SpeedrunHintReleaseSeconds
+            .Select(value => value / 60).ToList();
 
         // Create challenge
         challenge = await challengeRepository.CreateChallenge(game, challenge, ct);

@@ -75,6 +75,8 @@ public partial class Game
     public bool SpeedrunEmergencyHintEnabled { get; set; } = true;
     [MaxLength(1000)]
     public string SpeedrunEmergencyHintText { get; set; } = DefaultSpeedrunEmergencyHintText;
+    public bool ScoreboardFrozen { get; set; }
+    public DateTimeOffset? ScoreboardFreezeTimeUtc { get; set; }
 
     /// <summary>
     /// Poster hash

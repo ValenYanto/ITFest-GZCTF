@@ -20,6 +20,12 @@ public partial class ScoreboardModel
     public DateTimeOffset UpdateTimeUtc { get; set; } = DateTimeOffset.UtcNow;
 
     /// <summary>
+    /// Whether the public scoreboard is showing a frozen snapshot.
+    /// </summary>
+    [Required]
+    public bool ScoreboardFrozen { get; set; }
+
+    /// <summary>
     /// Blood bonus coefficient
     /// </summary>
     [Required]

@@ -9,12 +9,20 @@ const podiumClass = (rank?: number) => {
   return ''
 }
 
-export const LiveScoreboardPanel: FC<{ teams: LiveScoreboardTeamModel[]; changedTeams: Set<number> }> = ({
-  teams, changedTeams,
-}) => <aside className={`${classes.hudPanel} ${classes.scoreboardPanel}`}>
-  <div className={classes.panelHead}><div><b>SCOREBOARD</b><span>TOP 10</span></div><i>RANK / SCORE / SOLVES</i></div>
-  <div className={classes.scoreRows}>{teams.map((team) => <div key={team.id}
+export const LiveScoreboardPanel: FC<{
+  teams: LiveScoreboardTeamModel[]
+  changedTeams: Set<number>
+  frozen?: boolean
+}> = ({ teams, changedTeams, frozen }) => <aside className={`${classes.waterPanel} ${classes.scoreboardPanel}`}>
+  <header className={classes.panelHead}>
+    <div><span>Top 10 teams</span><h2>Standings</h2></div>
+    <div className={classes.scoreLabels}><span>Score</span><span>Solves</span></div>
+  </header>
+  <div className={classes.scoreRows}>{teams.slice(0, 10).map(team => <div key={team.id}
     className={`${classes.scoreRow} ${podiumClass(team.rank)} ${changedTeams.has(team.id!) ? classes.scorePulse : ''}`}>
-    <strong>{String(team.rank ?? 0).padStart(2, '0')}</strong><b>{team.name}</b><span>{team.score?.toLocaleString()}</span><em>{team.solvedCount} ✓</em>
+    <strong>{team.rank ?? 0}</strong>
+    <div><b>{team.name}</b>{team.rank === 1 && <small>Leader</small>}</div>
+    <span>{frozen ? '???' : team.score?.toLocaleString() ?? 0}</span>
+    <em>{frozen ? '???' : team.solvedCount ?? 0}</em>
   </div>)}</div>
 </aside>

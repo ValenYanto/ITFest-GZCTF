@@ -121,6 +121,8 @@ public class GameInfoModel
     public int? SpeedrunDefaultRoundDurationSeconds { get; set; }
     [Range(0, 86400)]
     public int? SpeedrunOvertimeSeconds { get; set; }
+    public bool ScoreboardFrozen { get; set; }
+    public DateTimeOffset? ScoreboardFreezeTimeUtc { get; set; }
 
     internal static GameInfoModel FromGame(Data.Game game) =>
         new()
@@ -148,6 +150,8 @@ public class GameInfoModel
             SpeedrunDefaultRoundDurationMinutes = game.SpeedrunDefaultRoundDurationMinutes,
             SpeedrunOvertimeMinutes = game.SpeedrunOvertimeMinutes,
             SpeedrunDefaultRoundDurationSeconds = game.SpeedrunDefaultRoundDurationSeconds,
-            SpeedrunOvertimeSeconds = game.SpeedrunOvertimeSeconds
+            SpeedrunOvertimeSeconds = game.SpeedrunOvertimeSeconds,
+            ScoreboardFrozen = game.ScoreboardFrozen,
+            ScoreboardFreezeTimeUtc = game.ScoreboardFreezeTimeUtc
         };
 }

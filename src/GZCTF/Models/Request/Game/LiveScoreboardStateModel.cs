@@ -7,6 +7,7 @@ public class LiveScoreboardStateModel
     public int GameId { get; set; }
     public string GameTitle { get; set; } = string.Empty;
     public GameMode GameMode { get; set; }
+    public bool ScoreboardFrozen { get; set; }
     public DateTimeOffset ServerTimeUtc { get; set; } = DateTimeOffset.UtcNow;
     public LiveScoreboardConfigModel Config { get; set; } = new();
     public SpeedrunStateModel SpeedrunState { get; set; } = new();
@@ -29,6 +30,7 @@ public class LiveScoreboardEventModel
     public NoticeType Type { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
     public string Message { get; set; } = string.Empty;
+    public int? TeamId { get; set; }
     public string? TeamName { get; set; }
     public string? ChallengeTitle { get; set; }
 }

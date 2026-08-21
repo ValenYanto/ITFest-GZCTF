@@ -71,7 +71,7 @@ const AiDisclosures: FC = () => {
 
     return (items ?? []).filter((item) =>
       [item.team, item.user, item.challenge, item.answer, item.aiUsageDisclosure]
-        .some((value) => value.toLocaleLowerCase().includes(normalizedQuery)))
+        .some((value) => value?.toLocaleLowerCase().includes(normalizedQuery)))
   }, [items, query])
 
   return (
@@ -129,7 +129,9 @@ const AiDisclosures: FC = () => {
                 </Table.Thead>
                 <Table.Tbody>
                   {filteredItems.map((item) => {
-                    const disclosureUrl = getSafeDisclosureUrl(item.aiUsageDisclosure)
+                    const disclosureUrl = item.aiUsageDisclosure
+                      ? getSafeDisclosureUrl(item.aiUsageDisclosure)
+                      : null
                     return (
                       <Table.Tr key={item.submissionId}>
                         <Table.Td>
@@ -143,7 +145,7 @@ const AiDisclosures: FC = () => {
                         </Table.Td>
                         <Table.Td>{item.challenge || '-'}</Table.Td>
                         <Table.Td>
-                          <Badge color={statusColor[item.status]} variant="light">
+                          <Badge color={item.status ? statusColor[item.status] : 'gray'} variant="light">
                             {item.status}
                           </Badge>
                         </Table.Td>

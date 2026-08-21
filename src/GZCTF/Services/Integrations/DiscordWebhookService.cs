@@ -47,6 +47,8 @@ public class DiscordWebhookService(
                 s.GameChallenge.MinScoreRate,
                 s.GameChallenge.Difficulty,
                 Game = s.Game!.Title,
+                s.Game.ScoreboardFrozen,
+                s.Game.ScoreboardFreezeTimeUtc,
                 s.Game.BloodNotificationEnabled,
                 s.Game.BloodDiscordWebhookUrl,
                 s.Game.BloodNotificationMaxRank,
@@ -70,6 +72,11 @@ public class DiscordWebhookService(
         if (solve.BloodNotificationMaxRank != 0 &&
             (solve.SubmitTimeUtc < solve.StartTimeUtc || solve.SubmitTimeUtc >= solve.EndTimeUtc))
             return;
+
+        var acceptedTimeUtc = await context.FirstSolves.AsNoTracking()
+            .Where(firstSolve => firstSolve.SubmissionId == submissionId)
+            .Select(firstSolve => (DateTimeOffset?)firstSolve.AcceptedTimeUtc)
+            .SingleOrDefaultAsync(token);
 
         var rank = await (
             from fs in context.FirstSolves.AsNoTracking()
@@ -99,8 +106,13 @@ public class DiscordWebhookService(
             solve.BloodNotificationEmbedFieldsTemplate,
             solve.BloodNotificationEmbedFooterTemplate,
             solve.BloodNotificationTimeZone);
-        var values = new RenderValues(rank, solve.Team, solve.Challenge, solve.Category.ToString(), score.ToString(),
-            solve.Game, solve.SubmitTimeUtc, solve.Id, solve.ChallengeId, solve.GameId);
+        var hideTeam = solve.ScoreboardFrozen &&
+                       (solve.ScoreboardFreezeTimeUtc is null ||
+                        acceptedTimeUtc is null ||
+                        acceptedTimeUtc >= solve.ScoreboardFreezeTimeUtc);
+        var values = new RenderValues(rank, hideTeam ? "Anonymous" : solve.Team, solve.Challenge,
+            solve.Category.ToString(), score.ToString(), solve.Game, solve.SubmitTimeUtc, solve.Id, solve.ChallengeId,
+            solve.GameId);
 
         await Send(solve.BloodDiscordWebhookUrl, new([BuildEmbed(settings, values)]), token);
     }

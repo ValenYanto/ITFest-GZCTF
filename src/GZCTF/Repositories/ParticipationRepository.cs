@@ -13,21 +13,21 @@ public class ParticipationRepository(
 {
     public async Task<bool> EnsureInstances(Participation part, Game game, CancellationToken token = default)
     {
-        var newInstances = Context.GameChallenges
-            .Where(c => c.GameId == game.Id && c.IsEnabled && !Context.Set<GameInstance>()
-                .Where(gi => gi.ParticipationId == part.Id)
-                .Select(gi => gi.ChallengeId).Contains(c.Id)
-            )
-            .Select(c => new GameInstance { ParticipationId = part.Id, ChallengeId = c.Id })
-            .ToList();
-
-        if (newInstances.Count == 0)
+        if (part.GameId != game.Id || part.Status != ParticipationStatus.Accepted)
             return false;
 
-        await Context.Set<GameInstance>().AddRangeAsync(newInstances, token);
-        await SaveAsync(token);
+        var minimumOperationTime = DateTimeOffset.MinValue;
+        var inserted = await Context.Database.ExecuteSqlInterpolatedAsync($"""
+            INSERT INTO "GameInstances"
+                ("ChallengeId", "ParticipationId", "IsLoaded", "LastContainerOperation")
+            SELECT challenge."Id", {part.Id}, FALSE, {minimumOperationTime}
+            FROM "GameChallenges" AS challenge
+            WHERE challenge."GameId" = {game.Id}
+              AND challenge."IsEnabled" = TRUE
+            ON CONFLICT ("ChallengeId", "ParticipationId") DO NOTHING
+            """, token);
 
-        return true;
+        return inserted > 0;
     }
 
     public Task<Participation?> GetParticipationById(int id, CancellationToken token = default) =>
@@ -103,6 +103,9 @@ public class ParticipationRepository(
             return;
 
         part.Status = status;
+        part.AcceptedTimeUtc = status == ParticipationStatus.Accepted
+            ? DateTimeOffset.UtcNow
+            : null;
 
         switch (status)
         {

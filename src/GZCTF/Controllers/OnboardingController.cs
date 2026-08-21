@@ -148,6 +148,7 @@ public class OnboardingController(
                 GameId = game.Id,
                 TeamId = team.Id,
                 Status = ParticipationStatus.Accepted,
+                AcceptedTimeUtc = now,
                 WhitelistSource = WhitelistSource.BulkOnboarding,
                 Token = gameRepository.GetToken(game, team),
                 Division = null

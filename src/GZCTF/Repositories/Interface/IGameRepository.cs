@@ -156,6 +156,11 @@ public interface IGameRepository : IRepository
     public Task<ScoreboardModel> GetScoreboard(Game game, CancellationToken token = default);
 
     /// <summary>
+    /// Get the public scoreboard snapshot captured when the game was frozen
+    /// </summary>
+    public Task<ScoreboardModel> GetFrozenScoreboard(Game game, CancellationToken token = default);
+
+    /// <summary>
     /// Try to get scoreboard by game id, return null if not exists
     /// </summary>
     /// <param name="gameId"></param>

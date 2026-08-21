@@ -70,12 +70,40 @@ public class TransferChallenge : IValidatableObject
     public List<string>? Hints { get; set; }
 
     /// <summary>
+    /// Canonical Speedrun hint release schedule, in seconds and aligned by hint index.
+    /// </summary>
+    public List<int>? SpeedrunHintReleaseSeconds { get; set; }
+
+    /// <summary>
+    /// Compatibility field for older packages. Seconds take precedence when both are present.
+    /// </summary>
+    public List<int>? SpeedrunHintReleaseMinutes { get; set; }
+
+    /// <summary>
     /// Container configuration (null = not a container challenge)
     /// </summary>
     public ContainerSection? Container { get; set; }
 
     public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
     {
+        var hintCount = Hints?.Count ?? 0;
+        var schedule = SpeedrunHintReleaseSeconds ?? SpeedrunHintReleaseMinutes;
+        if (schedule is not null)
+        {
+            if (schedule.Count != hintCount)
+                yield return new ValidationResult(
+                    "Speedrun hint schedule count must match the number of hints",
+                    [nameof(SpeedrunHintReleaseSeconds)]);
+            if (schedule.Any(value => value < 0))
+                yield return new ValidationResult(
+                    "Speedrun hint schedule values must be non-negative",
+                    [nameof(SpeedrunHintReleaseSeconds)]);
+            if (schedule.Zip(schedule.Skip(1)).Any(pair => pair.First > pair.Second))
+                yield return new ValidationResult(
+                    "Speedrun hint schedule must be ordered from earliest to latest",
+                    [nameof(SpeedrunHintReleaseSeconds)]);
+        }
+
         // Note: Flags may be completely unset for imported challenges.
         // This is acceptable since imported challenges are disabled by default
         // and require manual enablement after proper flag configuration.

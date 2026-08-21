@@ -335,6 +335,16 @@ const GameInfoEdit: FC = () => {
           )}
           onChange={(e) => game && setGame({ ...game, practiceMode: e.target.checked })}
         />
+        <Switch
+          disabled={disabled}
+          checked={game?.scoreboardFrozen ?? false}
+          classNames={{ root: misc.switchVerticalMiddle }}
+          label={SwitchLabel(
+            'Freeze scoreboard',
+            'Keep the public ranking at its current snapshot. Submissions and scoring stay active; unfreezing reveals every accumulated result.'
+          )}
+          onChange={(e) => game && setGame({ ...game, scoreboardFrozen: e.target.checked })}
+        />
         <Select
           label="Competition mode"
           description="Speedrun restricts challenges to the active category."

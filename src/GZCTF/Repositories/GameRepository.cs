@@ -167,6 +167,25 @@ public class GameRepository(
                 return GenScoreboard(game, token);
             }, token: token);
 
+    public Task<ScoreboardModel> GetFrozenScoreboard(Game game, CancellationToken token = default)
+    {
+        var frozenAt = game.ScoreboardFreezeTimeUtc;
+        if (frozenAt is null)
+        {
+            logger.LogWarning(
+                "Game {GameId} is marked as scoreboard-frozen without a freeze timestamp; using its start time.",
+                game.Id);
+            frozenAt = game.StartTimeUtc;
+        }
+
+        return cacheHelper.GetOrCreateAsync(logger, CacheKey.FrozenScoreBoard(game.Id, frozenAt.Value),
+            entry =>
+            {
+                entry.SlidingExpiration = TimeSpan.FromDays(14);
+                return GenScoreboard(game, token, frozenAt.Value);
+            }, token: token);
+    }
+
     public Task<ScoreboardModel?> TryGetScoreboard(int gameId, CancellationToken token = default)
         => cacheHelper.GetAsync<ScoreboardModel>(CacheKey.ScoreBoard(gameId), token);
 
@@ -277,7 +296,11 @@ public class GameRepository(
 
     // By xfoxfu & GZTimeWalker @ 2022/04/03
     // Refactored by GZTimeWalker @ 2024/08/31
-    public async Task<ScoreboardModel> GenScoreboard(Game game, CancellationToken token = default)
+    public Task<ScoreboardModel> GenScoreboard(Game game, CancellationToken token = default) =>
+        GenScoreboard(game, token, null);
+
+    private async Task<ScoreboardModel> GenScoreboard(Game game, CancellationToken token,
+        DateTimeOffset? solveCutoff)
     {
         Dictionary<int, ScoreboardItem> items;
         Dictionary<int, ChallengeInfo> challenges;
@@ -319,7 +342,9 @@ public class GameRepository(
             items = await Context.Participations
                 .AsNoTracking()
                 .IgnoreAutoIncludes()
-                .Where(p => p.GameId == game.Id && p.Status == ParticipationStatus.Accepted)
+                .Where(p => p.GameId == game.Id &&
+                            p.Status == ParticipationStatus.Accepted &&
+                            (solveCutoff == null || p.AcceptedTimeUtc <= solveCutoff))
                 .Include(p => p.Team)
                 .Select(p => new ScoreboardItem
                 {
@@ -381,11 +406,13 @@ public class GameRepository(
                 .Join(Context.Submissions.AsNoTracking().IgnoreAutoIncludes().Include(s => s.User),
                     x => x.fs.SubmissionId,
                     submission => submission.Id,
-                    (x, submission) => new SolveSnapshot(
-                        x.fs.ChallengeId,
-                        x.fs.ParticipationId,
-                        submission.SubmitTimeUtc,
-                        submission.UserName))
+                    (x, submission) => new { x.fs, submission })
+                .Where(x => solveCutoff == null || x.fs.AcceptedTimeUtc <= solveCutoff)
+                .Select(x => new SolveSnapshot(
+                    x.fs.ChallengeId,
+                    x.fs.ParticipationId,
+                    x.submission.SubmitTimeUtc,
+                    x.submission.UserName))
                 .ToListAsync(token);
 
             await trans.CommitAsync(token);
@@ -604,6 +631,8 @@ public class GameRepository(
 
         return new()
         {
+            UpdateTimeUtc = solveCutoff ?? DateTimeOffset.UtcNow,
+            ScoreboardFrozen = solveCutoff is not null,
             Challenges = challengesDict,
             Items = items,
             Divisions = divisions,

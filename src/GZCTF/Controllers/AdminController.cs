@@ -809,7 +809,11 @@ public class AdminController(
             if (existing is not null)
             {
                 existing.WhitelistSource = WhitelistSource.ManualWhitelist;
-                existing.Status = ParticipationStatus.Accepted;
+                if (existing.Status != ParticipationStatus.Accepted)
+                {
+                    existing.Status = ParticipationStatus.Accepted;
+                    existing.AcceptedTimeUtc = DateTimeOffset.UtcNow;
+                }
             }
             else
             {
@@ -821,6 +825,7 @@ public class AdminController(
                     GameId = gameId,
                     TeamId = teamId,
                     Status = ParticipationStatus.Accepted,
+                    AcceptedTimeUtc = DateTimeOffset.UtcNow,
                     WhitelistSource = WhitelistSource.ManualWhitelist,
                     Token = gameRepository.GetToken(game, team),
                     Division = null

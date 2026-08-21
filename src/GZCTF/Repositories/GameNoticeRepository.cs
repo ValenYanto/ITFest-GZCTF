@@ -21,7 +21,15 @@ public class GameNoticeRepository(
 
         await cacheHelper.RemoveAsync(CacheKey.GameNotice(notice.GameId), token);
 
-        await hub.Clients.Group($"Game_{notice.GameId}").ReceivedGameNotice(notice);
+        var freeze = await Context.Games.AsNoTracking()
+            .Where(game => game.Id == notice.GameId)
+            .Select(game => new { game.ScoreboardFrozen, game.ScoreboardFreezeTimeUtc })
+            .SingleAsync(token);
+        var hideTeam = freeze.ScoreboardFrozen &&
+                       (freeze.ScoreboardFreezeTimeUtc is null ||
+                        notice.PublishTimeUtc >= freeze.ScoreboardFreezeTimeUtc);
+        await hub.Clients.Group($"Game_{notice.GameId}")
+            .ReceivedGameNotice(hideTeam ? MaskBloodNotice(notice) : notice);
 
         return notice;
     }
@@ -43,6 +51,20 @@ public class GameNoticeRepository(
                 .Take(300).ToArrayAsync(token);
             return new DataWithModifiedTime<GameNotice[]>(notices, DateTimeOffset.UtcNow);
         }, token: token);
+
+    private static GameNotice MaskBloodNotice(GameNotice notice)
+    {
+        if (notice.Type is not (NoticeType.FirstBlood or NoticeType.SecondBlood or NoticeType.ThirdBlood))
+            return notice;
+
+        return new()
+        {
+            Id = notice.Id,
+            Type = notice.Type,
+            PublishTimeUtc = notice.PublishTimeUtc,
+            Values = ["Anonymous", notice.Values?.ElementAtOrDefault(1) ?? string.Empty]
+        };
+    }
 
     public async Task RemoveNotice(GameNotice notice, CancellationToken token = default)
     {

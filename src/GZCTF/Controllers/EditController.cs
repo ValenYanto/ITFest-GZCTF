@@ -345,6 +345,12 @@ public class EditController(
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_NotFound)],
                 StatusCodes.Status404NotFound));
 
+        if (model.ScoreboardFrozen && !game.ScoreboardFrozen)
+            game.ScoreboardFreezeTimeUtc = DateTimeOffset.UtcNow;
+        else if (!model.ScoreboardFrozen)
+            game.ScoreboardFreezeTimeUtc = null;
+
+        game.ScoreboardFrozen = model.ScoreboardFrozen;
         game.Update(model);
         await gameRepository.UpdateGame(game, token);
 
@@ -976,19 +982,30 @@ public class EditController(
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_NotFound)],
                 StatusCodes.Status404NotFound));
 
+        await speedrunService.LockGameLifecycle(id, token);
+
         var res = await challengeRepository.GetChallenge(id, cId, token);
 
         if (res is null)
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
                 StatusCodes.Status404NotFound));
 
-        // NOTE: IsEnabled can only be updated outside the edit page
-        if (model.IsEnabled is true && !res.IsEnabled && res.Type != ChallengeType.DynamicContainer)
+        if (ChangesActiveSpeedrunChallenge(model) &&
+            (await speedrunService.IsChallengeInActiveRound(id, cId, token) ||
+             model.Category is not null &&
+             await speedrunService.IsCategoryInActiveRound(id, model.Category.Value, token)))
         {
-            await challengeRepository.LoadFlags(res, token);
+            return Conflict(new RequestResponse(
+                "This challenge belongs to the active Speedrun round. End or cancel the round before changing its category, enabled state, flag, or hint schedule.",
+                StatusCodes.Status409Conflict));
+        }
 
-            if (res.Flags.Count == 0)
-                return BadRequest(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NoFlag)]));
+        // NOTE: IsEnabled can only be updated outside the edit page
+        if (model.IsEnabled is true && !res.IsEnabled)
+        {
+            var validationError = await ValidateChallengeForEnable(res, token);
+            if (validationError is not null)
+                return BadRequest(new RequestResponse(validationError));
         }
 
         if (model.EnableTrafficCapture is true && !res.Type.IsContainer())
@@ -998,10 +1015,13 @@ public class EditController(
             return BadRequest(
                 new RequestResponse(localizer[nameof(Resources.Program.Challenge_DynamicAssetsNotNullable)]));
 
-        if (model.SpeedrunHintReleaseMinutes?.Any(minute => minute < 0) is true)
-            return BadRequest(new RequestResponse("Speedrun hint release minutes must be zero or greater."));
-        if (model.SpeedrunHintReleaseSeconds?.Any(second => second < 0) is true)
-            return BadRequest(new RequestResponse("Speedrun hint release seconds must be zero or greater."));
+        var scheduleError = ValidateHintSchedule(model.Hints ?? res.Hints,
+            model.SpeedrunHintReleaseSeconds ??
+            (model.SpeedrunHintReleaseMinutes is null ? res.SpeedrunHintReleaseSeconds : null),
+            model.SpeedrunHintReleaseMinutes ??
+            (model.SpeedrunHintReleaseSeconds is null ? res.SpeedrunHintReleaseMinutes : null));
+        if (scheduleError is not null)
+            return BadRequest(new RequestResponse(scheduleError));
 
         var hintUpdated = model.IsHintUpdated(res.Hints?.GetSetHashCode());
 
@@ -1044,6 +1064,157 @@ public class EditController(
         await cacheHelper.FlushScoreboardCache(game.Id, token);
 
         return Ok(ChallengeEditDetailModel.FromChallenge(res));
+    }
+
+    /// <summary>
+    /// Enable or disable multiple game challenges in one lifecycle transaction.
+    /// Invalid challenges remain disabled and are returned with validation reasons.
+    /// </summary>
+    [HttpPut("Games/{id:int}/Challenges/BulkState")]
+    [ProducesResponseType(typeof(ChallengeBulkStateResultModel), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(typeof(RequestResponse), StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> BulkUpdateChallengeState([FromRoute] int id,
+        [FromBody] ChallengeBulkStateModel model, CancellationToken token)
+    {
+        var game = await gameRepository.GetGameById(id, token);
+        if (game is null)
+            return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Game_NotFound)],
+                StatusCodes.Status404NotFound));
+
+        await using var transaction = await challengeRepository.BeginTransactionAsync(token);
+        await speedrunService.LockGameLifecycle(id, token);
+
+        var requestedIds = model.ChallengeIds.Distinct().ToArray();
+        var challenges = await challengeRepository.GetChallenges(id, token);
+        if (requestedIds.Length > 0)
+        {
+            var foundIds = challenges.Select(challenge => challenge.Id).ToHashSet();
+            var missing = requestedIds.Where(challengeId => !foundIds.Contains(challengeId)).ToArray();
+            if (missing.Length > 0)
+                return NotFound(new RequestResponse($"Challenges not found in this game: {string.Join(", ", missing)}",
+                    StatusCodes.Status404NotFound));
+            challenges = challenges.Where(challenge => requestedIds.Contains(challenge.Id)).ToArray();
+        }
+
+        foreach (var challenge in challenges)
+        {
+            if (challenge.IsEnabled == model.IsEnabled)
+                continue;
+            if (await speedrunService.IsChallengeInActiveRound(id, challenge.Id, token))
+            {
+                return Conflict(new RequestResponse(
+                    $"Challenge '{challenge.Title}' belongs to the active Speedrun round. End or cancel the round before changing its enabled state.",
+                    StatusCodes.Status409Conflict));
+            }
+        }
+
+        var failures = new List<ChallengeLifecycleFailureModel>();
+        var changed = new List<GameChallenge>();
+        var validEnableIds = new List<int>();
+        if (model.IsEnabled)
+        {
+            foreach (var challenge in challenges)
+            {
+                var error = await ValidateChallengeForEnable(challenge, token);
+                if (error is not null)
+                {
+                    failures.Add(new()
+                    {
+                        ChallengeId = challenge.Id,
+                        Title = challenge.Title,
+                        Reason = error
+                    });
+                    continue;
+                }
+                validEnableIds.Add(challenge.Id);
+                if (!challenge.IsEnabled)
+                    changed.Add(challenge);
+            }
+        }
+        else
+        {
+            changed.AddRange(challenges.Where(challenge => challenge.IsEnabled));
+        }
+
+        foreach (var challenge in changed)
+            challenge.IsEnabled = model.IsEnabled;
+        await challengeRepository.SaveAsync(token);
+
+        var createdInstanceCount = 0;
+        if (model.IsEnabled && validEnableIds.Count > 0)
+        {
+            createdInstanceCount = await challengeRepository.ReconcileInstances(id,
+                validEnableIds, token);
+
+            if (changed.Count > 0 && game.IsActive && game.Mode != GameMode.Speedrun)
+                foreach (var challenge in changed)
+                    await gameNoticeRepository.AddNotice(
+                        new() { Game = game, Type = NoticeType.NewChallenge, Values = [challenge.Title] }, token);
+        }
+        else if (!model.IsEnabled)
+        {
+            foreach (var challenge in changed.Where(challenge => challenge.Type.IsContainer()))
+                await instanceRepository.DestroyAllContainers(challenge, token);
+        }
+
+        await transaction.CommitAsync(token);
+        await cacheHelper.FlushScoreboardCache(id, token);
+
+        return Ok(new ChallengeBulkStateResultModel
+        {
+            ChangedChallengeIds = changed.Select(challenge => challenge.Id).ToArray(),
+            CreatedInstanceCount = createdInstanceCount,
+            Failures = failures.ToArray()
+        });
+    }
+
+    private static bool ChangesActiveSpeedrunChallenge(ChallengeUpdateModel model) =>
+        model.Category is not null || model.IsEnabled is not null || model.FlagTemplate is not null ||
+        model.Hints is not null || model.SpeedrunHintReleaseSeconds is not null ||
+        model.SpeedrunHintReleaseMinutes is not null;
+
+    private async Task<string?> ValidateChallengeForEnable(GameChallenge challenge, CancellationToken token)
+    {
+        if (challenge.Type != ChallengeType.DynamicContainer)
+        {
+            await challengeRepository.LoadFlags(challenge, token);
+            if (challenge.Flags.Count == 0)
+                return localizer[nameof(Resources.Program.Challenge_NoFlag)];
+        }
+
+        if (challenge.Type.IsContainer())
+        {
+            if (string.IsNullOrWhiteSpace(challenge.ContainerImage))
+                return "Container image is required before this challenge can be enabled.";
+            if (challenge.ExposePort is null or < 1 or > 65535)
+                return "A valid exposed container port (1-65535) is required before this challenge can be enabled.";
+        }
+
+        if (challenge.Type == ChallengeType.DynamicContainer &&
+            (string.IsNullOrWhiteSpace(challenge.FlagTemplate) ||
+             !new DynamicFlagGenerator(challenge.FlagTemplate).IsValid()))
+        {
+            return "A valid, non-trivial dynamic flag template is required before this challenge can be enabled.";
+        }
+
+        return ValidateHintSchedule(challenge.Hints, challenge.SpeedrunHintReleaseSeconds,
+            challenge.SpeedrunHintReleaseMinutes);
+    }
+
+    private static string? ValidateHintSchedule(IReadOnlyCollection<string>? hints,
+        IReadOnlyList<int>? seconds, IReadOnlyList<int>? minutes)
+    {
+        var schedule = seconds ?? minutes?.Select(value => value * 60).ToArray();
+        if (schedule is null)
+            return null;
+        if (schedule.Count != (hints?.Count ?? 0))
+            return "Speedrun hint schedule count must match the number of hints.";
+        if (schedule.Any(value => value < 0))
+            return "Speedrun hint schedule values must be zero or greater.";
+        if (schedule.Zip(schedule.Skip(1)).Any(pair => pair.First > pair.Second))
+            return "Speedrun hint schedule must be ordered from earliest to latest.";
+        return null;
     }
 
     /// <summary>
@@ -1216,13 +1387,21 @@ public class EditController(
     public async Task<IActionResult> AddFlags([FromRoute] int id, [FromRoute] int cId,
         [FromBody] FlagCreateModel[] models, CancellationToken token)
     {
+        await using var transaction = await challengeRepository.BeginTransactionAsync(token);
+        await speedrunService.LockGameLifecycle(id, token);
         var challenge = await challengeRepository.GetChallenge(id, cId, token);
 
         if (challenge is null)
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
                 StatusCodes.Status404NotFound));
 
+        if (await speedrunService.IsChallengeInActiveRound(id, cId, token))
+            return Conflict(new RequestResponse(
+                "Flags cannot be changed while this challenge belongs to a Running or Overtime Speedrun round. End or cancel the round first.",
+                StatusCodes.Status409Conflict));
+
         await challengeRepository.AddFlags(challenge, models, token);
+        await transaction.CommitAsync(token);
 
         return Ok();
     }
@@ -1244,13 +1423,22 @@ public class EditController(
     public async Task<IActionResult> RemoveFlag([FromRoute] int id, [FromRoute] int cId, [FromRoute] int fId,
         CancellationToken token)
     {
+        await using var transaction = await challengeRepository.BeginTransactionAsync(token);
+        await speedrunService.LockGameLifecycle(id, token);
         var challenge = await challengeRepository.GetChallenge(id, cId, token);
 
         if (challenge is null)
             return NotFound(new RequestResponse(localizer[nameof(Resources.Program.Challenge_NotFound)],
                 StatusCodes.Status404NotFound));
 
-        return Ok(await challengeRepository.RemoveFlag(challenge, fId, token));
+        if (await speedrunService.IsChallengeInActiveRound(id, cId, token))
+            return Conflict(new RequestResponse(
+                "Flags cannot be changed while this challenge belongs to a Running or Overtime Speedrun round. End or cancel the round first.",
+                StatusCodes.Status409Conflict));
+
+        var status = await challengeRepository.RemoveFlag(challenge, fId, token);
+        await transaction.CommitAsync(token);
+        return Ok(status);
     }
 
 

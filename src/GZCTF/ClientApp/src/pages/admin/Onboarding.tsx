@@ -142,7 +142,7 @@ const GlobalOnboardingPage: FC = () => {
     setSending(true)
     setResults([])
     try {
-      const response = await api.admin.adminBulkCreateGlobalOnboarding({
+      const response = await api.admin.adminBulkCreateOnboarding({
         gameIds: gameIds.map(Number),
         entries: parsed.entries,
         expiresInHours: expiresHours,
@@ -172,7 +172,8 @@ const GlobalOnboardingPage: FC = () => {
       const response = await api.admin.adminResendOnboarding(inviteId, {
         expiresInHours: expiresHours,
       })
-      setLatestLinks((current) => ({ ...current, [inviteId]: response.data.onboardingUrl }))
+      if (response.data.onboardingUrl)
+        setLatestLinks((current) => ({ ...current, [inviteId]: response.data.onboardingUrl! }))
       showNotification({
         color: response.data.emailQueued ? 'teal' : 'orange',
         message: response.data.emailQueued
@@ -188,6 +189,9 @@ const GlobalOnboardingPage: FC = () => {
   }
 
   const confirmRevoke = (record: CaptainOnboardingRecordModel) => {
+    const inviteId = record.inviteId
+    if (inviteId === undefined) return
+
     modals.openConfirmModal({
       title: 'Tarik link onboarding',
       children: (
@@ -198,12 +202,12 @@ const GlobalOnboardingPage: FC = () => {
       labels: { confirm: 'Tarik link', cancel: 'Batal' },
       confirmProps: { color: 'red' },
       onConfirm: async () => {
-        setActionInviteId(record.inviteId)
+        setActionInviteId(inviteId)
         try {
-          await api.admin.adminRevokeOnboarding(record.inviteId)
+          await api.admin.adminRevokeOnboarding(inviteId)
           setLatestLinks((current) => {
             const next = { ...current }
-            delete next[record.inviteId]
+            delete next[inviteId]
             return next
           })
           showNotification({ color: 'teal', message: 'Link onboarding berhasil dicabut.' })
@@ -220,7 +224,10 @@ const GlobalOnboardingPage: FC = () => {
   const statusCounts = useMemo(() => {
     const counts = new Map<CaptainOnboardingStatus, number>()
     Object.values(CaptainOnboardingStatus).forEach((status) => counts.set(status, 0))
-    history.forEach((record) => counts.set(record.status, (counts.get(record.status) ?? 0) + 1))
+    history.forEach((record) => {
+      if (record.status !== undefined)
+        counts.set(record.status, (counts.get(record.status) ?? 0) + 1)
+    })
     return counts
   }, [history])
 
@@ -296,29 +303,31 @@ const GlobalOnboardingPage: FC = () => {
               </Table.Tr>
             </Table.Thead>
             <Table.Tbody>
-              {history.map((record) => {
+              {history.map((record, index) => {
+                const status = record.status ?? CaptainOnboardingStatus.Pending
                 const canRevoke =
-                  record.status !== CaptainOnboardingStatus.Redeemed &&
-                  record.status !== CaptainOnboardingStatus.Revoked
-                const canResend = record.status !== CaptainOnboardingStatus.Redeemed
-                const backupLink = latestLinks[record.inviteId]
+                  status !== CaptainOnboardingStatus.Redeemed &&
+                  status !== CaptainOnboardingStatus.Revoked
+                const canResend = status !== CaptainOnboardingStatus.Redeemed
+                const inviteId = record.inviteId
+                const backupLink = inviteId === undefined ? undefined : latestLinks[inviteId]
 
                 return (
-                  <Table.Tr key={record.inviteId}>
+                  <Table.Tr key={inviteId ?? `onboarding-${index}`}>
                     <Table.Td>
                       <Text fw={700}>{record.teamName}</Text>
                       <Text size="xs" c="dimmed">{record.captainEmail}</Text>
                     </Table.Td>
                     <Table.Td>
                       <Group gap={4}>
-                        {record.gameTitles.map((title) => (
+                        {(record.gameTitles ?? []).map((title) => (
                           <Badge key={title} size="sm" variant="light">{title}</Badge>
                         ))}
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Badge color={statusView[record.status].color}>
-                        {statusView[record.status].label}
+                      <Badge color={statusView[status].color}>
+                        {statusView[status].label}
                       </Badge>
                     </Table.Td>
                     <Table.Td>
@@ -354,8 +363,8 @@ const GlobalOnboardingPage: FC = () => {
                             variant="light"
                             color="cyan"
                             disabled={!canResend}
-                            loading={actionInviteId === record.inviteId}
-                            onClick={() => void resendInvite(record.inviteId)}
+                            loading={actionInviteId === inviteId}
+                            onClick={() => inviteId !== undefined && void resendInvite(inviteId)}
                           >
                             <Icon path={mdiEmailSyncOutline} size={0.9} />
                           </ActionIcon>

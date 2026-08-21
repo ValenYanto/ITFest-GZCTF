@@ -19,6 +19,16 @@ public static class TransferExtensions
                 Content = game.Content,
                 Hidden = game.Hidden,
                 PracticeMode = game.PracticeMode,
+                Mode = game.Mode,
+                Speedrun = new SpeedrunTransferSection
+                {
+                    DefaultRoundDurationSeconds = game.SpeedrunDefaultRoundDurationSeconds,
+                    OvertimeSeconds = game.SpeedrunOvertimeSeconds,
+                    AllowManualExtend = game.SpeedrunAllowManualExtend,
+                    HideInactiveChallenges = game.SpeedrunHideInactiveChallenges,
+                    EmergencyHintEnabled = game.SpeedrunEmergencyHintEnabled,
+                    EmergencyHintText = game.SpeedrunEmergencyHintText
+                },
                 AcceptWithoutReview = game.AcceptWithoutReview,
                 InviteCode = game.InviteCode,
                 TeamMemberCountLimit = game.TeamMemberCountLimit,
@@ -74,6 +84,13 @@ public static class TransferExtensions
                 Category = challenge.Category,
                 Type = challenge.Type,
                 Enabled = challenge.IsEnabled,
+                SpeedrunHintReleaseSeconds = challenge.SpeedrunHintReleaseSeconds ??
+                    challenge.SpeedrunHintReleaseMinutes?.Select(value => value * 60).ToList() ??
+                    Enumerable.Repeat(0, challenge.Hints?.Count ?? 0).ToList(),
+                SpeedrunHintReleaseMinutes = (challenge.SpeedrunHintReleaseSeconds ??
+                    challenge.SpeedrunHintReleaseMinutes?.Select(value => value * 60).ToList() ??
+                    Enumerable.Repeat(0, challenge.Hints?.Count ?? 0).ToList())
+                    .Select(value => value / 60).ToList(),
                 Scoring = new ScoringSection
                 {
                     Original = challenge.OriginalScore,
@@ -195,6 +212,7 @@ public static class TransferExtensions
                 Content = transfer.Content,
                 Hidden = transfer.Hidden,
                 PracticeMode = transfer.PracticeMode,
+                Mode = transfer.Mode,
                 AcceptWithoutReview = transfer.AcceptWithoutReview,
                 InviteCode = transfer.InviteCode,
                 TeamMemberCountLimit = transfer.TeamMemberCountLimit,
@@ -203,6 +221,18 @@ public static class TransferExtensions
                 EndTimeUtc = transfer.EndTime,
                 PosterHash = transfer.PosterHash
             };
+
+            if (transfer.Speedrun is { } speedrun)
+            {
+                game.SpeedrunDefaultRoundDurationSeconds = speedrun.DefaultRoundDurationSeconds;
+                game.SpeedrunOvertimeSeconds = speedrun.OvertimeSeconds;
+                game.SpeedrunDefaultRoundDurationMinutes = speedrun.DefaultRoundDurationSeconds / 60;
+                game.SpeedrunOvertimeMinutes = speedrun.OvertimeSeconds / 60;
+                game.SpeedrunAllowManualExtend = speedrun.AllowManualExtend;
+                game.SpeedrunHideInactiveChallenges = speedrun.HideInactiveChallenges;
+                game.SpeedrunEmergencyHintEnabled = speedrun.EmergencyHintEnabled;
+                game.SpeedrunEmergencyHintText = speedrun.EmergencyHintText;
+            }
 
             // Generate new key pair (always generate new keys on import)
             game.GenerateKeyPair(xorKey);
@@ -265,8 +295,13 @@ public static class TransferExtensions
                 DisableBloodBonus = transfer.Flags.DisableBloodBonus,
                 RequireSolverUpload = transfer.Flags.RequireSolverUpload,
                 EnableTrafficCapture = transfer.Flags.EnableTrafficCapture,
-                Hints = transfer.Hints
+                Hints = transfer.Hints,
+                SpeedrunHintReleaseSeconds = transfer.SpeedrunHintReleaseSeconds ??
+                    transfer.SpeedrunHintReleaseMinutes?.Select(value => value * 60).ToList() ??
+                    Enumerable.Repeat(0, transfer.Hints?.Count ?? 0).ToList()
             };
+            challenge.SpeedrunHintReleaseMinutes = challenge.SpeedrunHintReleaseSeconds
+                .Select(value => value / 60).ToList();
 
             // Container configuration
             if (transfer.Container == null)

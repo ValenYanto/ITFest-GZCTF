@@ -28,6 +28,11 @@ public class Participation
     public WhitelistSource WhitelistSource { get; set; }
 
     /// <summary>
+    /// Time when this participation was accepted.
+    /// </summary>
+    public DateTimeOffset? AcceptedTimeUtc { get; set; }
+
+    /// <summary>
     /// Team token
     /// </summary>
     [Required]

@@ -8,14 +8,12 @@ import {
   Table,
   Text,
   Textarea,
-  TextInput,
   Title,
 } from '@mantine/core'
 import { showNotification } from '@mantine/notifications'
 import {
   mdiCheck,
   mdiClose,
-  mdiEmailOutline,
   mdiSend,
   mdiUpload,
 } from '@mdi/js'
@@ -63,7 +61,7 @@ const OnboardingPage: FC = () => {
     setSending(true)
     setResults(null)
     try {
-      const res = await api.admin.adminBulkCreateOnboarding(numId, {
+      const res = await api.admin.adminBulkCreateGameOnboarding(numId, {
         entries: parsedEntries,
         expiresInHours: expiresHours,
       })

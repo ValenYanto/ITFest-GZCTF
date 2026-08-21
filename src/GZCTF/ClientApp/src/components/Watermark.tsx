@@ -123,7 +123,7 @@ export const Watermark: React.FC<React.PropsWithChildren<WatermarkProps>> = ({
     setBackgroundImage(`url("data:image/svg+xml;base64,${window.btoa(svg)}")`)
   }, [show, text, textColor, textSize, opacity, gutter, rotate])
 
-  const Wrapper = wrapperElement
+  const Wrapper: React.ElementType = wrapperElement
 
   const watermarkStyle = useMemo(
     () => ({
@@ -157,7 +157,7 @@ export const Watermark: React.FC<React.PropsWithChildren<WatermarkProps>> = ({
     .map(([key, value]) => `${kebabCase(key)}:${value}`)
     .join(';')
 
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const wrapperRef = useRef<HTMLElement>(null)
   const watermarkRef = useRef<HTMLDivElement>(null)
 
   const watermarkBox: (layers: number, child: HTMLDivElement) => HTMLDivElement = (layers, child) => {
@@ -206,9 +206,9 @@ export const Watermark: React.FC<React.PropsWithChildren<WatermarkProps>> = ({
     return () => observer.disconnect()
   }, [show, backgroundImage])
 
-  return (
-    <Wrapper style={{ position: 'relative', ...wrapperStyle }} ref={wrapperRef}>
-      {children}
-    </Wrapper>
+  return React.createElement(
+    Wrapper,
+    { style: { position: 'relative', ...wrapperStyle }, ref: wrapperRef },
+    children
   )
 }

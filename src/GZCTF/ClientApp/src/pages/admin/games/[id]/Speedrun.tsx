@@ -113,7 +113,7 @@ const Speedrun: FC = () => {
                 <Button disabled={busy || !!round} onClick={() => run(() => api.edit.editSpinSpeedrun(gameId))}>Spin wheel</Button>
                 <Button disabled={busy || round?.status !== SpeedrunRoundStatus.Ready} onClick={() => run(() => api.edit.editStartSpeedrunRound(gameId, round!.id!))}>Start selected round</Button>
                 <Button color="red" disabled={busy || !round} onClick={() => run(() => api.edit.editEndSpeedrunRound(gameId, round!.id!))}>End round</Button>
-                <Button variant="light" disabled={busy || !activeRound} onClick={() => run(() => api.edit.editExtendSpeedrunRound(gameId, round!.id!, 300))}>Extend +5</Button>
+                <Button variant="light" disabled={busy || !activeRound} onClick={() => run(() => api.edit.editExtendSpeedrunRound(gameId, round!.id!, { seconds: 300 }))}>Extend +5</Button>
                 <TextInput
                   w={120}
                   aria-label="Custom extend time"
@@ -124,7 +124,7 @@ const Speedrun: FC = () => {
                 <Button
                   variant="light"
                   disabled={busy || !activeRound || !parseDurationSeconds(extendTime)}
-                  onClick={() => run(() => api.edit.editExtendSpeedrunRound(gameId, round!.id!, parseDurationSeconds(extendTime)!))}
+                  onClick={() => run(() => api.edit.editExtendSpeedrunRound(gameId, round!.id!, { seconds: parseDurationSeconds(extendTime)! }))}
                 >
                   Extend
                 </Button>
@@ -140,7 +140,7 @@ const Speedrun: FC = () => {
                 <Button
                   mt={25}
                   disabled={busy || !activeRound || !parseDurationSeconds(remainingTime)}
-                  onClick={() => run(() => api.edit.editSetSpeedrunRoundTimer(gameId, round!.id!, parseDurationSeconds(remainingTime)!))}
+                  onClick={() => run(() => api.edit.editSetSpeedrunRoundTimer(gameId, round!.id!, { seconds: parseDurationSeconds(remainingTime)! }))}
                 >
                   Set timer
                 </Button>

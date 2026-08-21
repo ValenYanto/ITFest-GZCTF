@@ -29,6 +29,12 @@ public class FirstSolve
     [Required]
     public int SubmissionId { get; set; }
 
+    /// <summary>
+    /// Time when this solve was accepted and recorded.
+    /// </summary>
+    [Required]
+    public DateTimeOffset AcceptedTimeUtc { get; set; }
+
     #region Navigation Properties
 
     public Participation Participation { get; set; } = null!;
