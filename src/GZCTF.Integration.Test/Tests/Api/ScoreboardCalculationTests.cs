@@ -29,6 +29,37 @@ namespace GZCTF.Integration.Test.Tests.Api;
 [Collection(nameof(IntegrationTestCollection))]
 public class ScoreboardCalculationTests(GZCTFApplicationFactory factory, ITestOutputHelper output)
 {
+    [Fact]
+    public async Task Scoreboard_ShouldKeepBloodMarkers_WhenEveryBloodBonusIsZero()
+    {
+        var game = await CreateGameWithBloodBonus(
+            $"Zero Blood Bonus {TestDataSeeder.RandomName(8)}",
+            packBloods(1.0f, 1.0f, 1.0f));
+        var challenge = await CreateChallenge(game.Id, "Zero Bonus Challenge", "flag{zero_bonus}", 1000);
+        var teams = await CreateMultipleTeams(3, "ZeroBlood");
+
+        foreach (var team in teams)
+            await JoinGameAndSolve(team, game.Id, [(challenge.Id, challenge.Flag)]);
+
+        await FlushScoreboardCache(game.Id);
+        var scoreboard = await GetScoreboard(
+            teams[0].client,
+            game.Id,
+            teams.Select(team => team.team.Id).ToArray(),
+            readiness: snapshot => snapshot.GetChallenge(challenge.Id).SolvedCount == 3);
+
+        var challengeInfo = scoreboard.GetChallenge(challenge.Id);
+        Assert.Equal(3, challengeInfo.Bloods.Count);
+        Assert.Equal(teams.Select(team => team.team.Id), challengeInfo.Bloods.Select(blood => blood.Id));
+        Assert.Equal(SubmissionType.FirstBlood,
+            scoreboard.GetTeam(teams[0].team.Id).SolvedChallenges.Single().Type);
+        Assert.Equal(SubmissionType.SecondBlood,
+            scoreboard.GetTeam(teams[1].team.Id).SolvedChallenges.Single().Type);
+        Assert.Equal(SubmissionType.ThirdBlood,
+            scoreboard.GetTeam(teams[2].team.Id).SolvedChallenges.Single().Type);
+        Assert.All(teams, team => Assert.Equal(challengeInfo.Score, scoreboard.GetTeam(team.team.Id).Score));
+    }
+
     /// <summary>
     /// Test scoreboard calculations with precise numerical score verification
     /// Verifies blood bonus calculation, dynamic scoring, and proper score accumulation

@@ -6,7 +6,11 @@ using Microsoft.EntityFrameworkCore;
 
 namespace GZCTF.Services;
 
-public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeRepository, CacheHelper cacheHelper)
+public class SpeedrunService(
+    AppDbContext context,
+    IGameNoticeRepository noticeRepository,
+    CacheHelper cacheHelper,
+    SpeedrunContainerCleanupService containerCleanupService)
 {
     private const int AdvisoryLockNamespace = 0x5350524E; // "SPRN"
 
@@ -71,10 +75,11 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
     {
         await using var transaction = await context.Database.BeginTransactionAsync(token);
         await AcquireGameLock(game.Id, token);
-        await UpdateExpiredRoundCore(game, token);
+        var finishedRound = await UpdateExpiredRoundCore(game, token);
         if (await CurrentRound(game.Id, token) is not null)
         {
-            await transaction.RollbackAsync(token);
+            await transaction.CommitAsync(token);
+            QueueContainerCleanup(finishedRound);
             return null;
         }
         var categories = await context.SpeedrunCategories.Where(c => c.GameId == game.Id && c.Included && !c.Used &&
@@ -83,7 +88,8 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
             .ToArrayAsync(token);
         if (categories.Length == 0)
         {
-            await transaction.RollbackAsync(token);
+            await transaction.CommitAsync(token);
+            QueueContainerCleanup(finishedRound);
             return null;
         }
         var selected = categories[Random.Shared.Next(categories.Length)];
@@ -99,6 +105,7 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         await Announce(game.Id, $"Speedrun category selected: {selected.Category}", token);
         await cacheHelper.FlushScoreboardCache(game.Id, token);
         await transaction.CommitAsync(token);
+        QueueContainerCleanup(finishedRound);
         return ToModel(round, DateTimeOffset.UtcNow);
     }
 
@@ -140,6 +147,7 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         await Announce(gameId, "Speedrun round finished.", token);
         await cacheHelper.FlushScoreboardCache(gameId, token);
         await transaction.CommitAsync(token);
+        QueueContainerCleanup(round);
         return true;
     }
 
@@ -208,6 +216,7 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
 
         await FinishRound(round, DateTimeOffset.UtcNow, token);
         await transaction.CommitAsync(token);
+        QueueContainerCleanup(round);
         return true;
     }
 
@@ -307,16 +316,17 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
     {
         await using var transaction = await context.Database.BeginTransactionAsync(token);
         await AcquireGameLock(game.Id, token);
-        await UpdateExpiredRoundCore(game, token);
+        var finishedRound = await UpdateExpiredRoundCore(game, token);
         await transaction.CommitAsync(token);
+        QueueContainerCleanup(finishedRound);
     }
 
-    private async Task UpdateExpiredRoundCore(Game game, CancellationToken token)
+    private async Task<SpeedrunRound?> UpdateExpiredRoundCore(Game game, CancellationToken token)
     {
         var round = await context.SpeedrunRounds.SingleOrDefaultAsync(r => r.GameId == game.Id &&
             (r.Status == SpeedrunRoundStatus.Running || r.Status == SpeedrunRoundStatus.Overtime), token);
         if (round is null)
-            return;
+            return null;
         var now = DateTimeOffset.UtcNow;
         if (round.Status == SpeedrunRoundStatus.Running && round.EndsAtUtc <= now)
         {
@@ -332,7 +342,10 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
                 }
             }
             else
+            {
                 await FinishRound(round, now, token);
+                return round;
+            }
 
             if (round.Status == SpeedrunRoundStatus.Overtime)
             {
@@ -344,7 +357,10 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
                  (!await HasUnsolvedChallenges(game.Id, round.Category, token) || round.OvertimeEndsAtUtc <= now))
         {
             await FinishRound(round, now, token);
+            return round;
         }
+
+        return null;
     }
 
     private Task<bool> HasUnsolvedChallenges(int gameId, ChallengeCategory category, CancellationToken token) =>
@@ -359,6 +375,12 @@ public class SpeedrunService(AppDbContext context, IGameNoticeRepository noticeR
         await context.SaveChangesAsync(token);
         await Announce(round.GameId, "Speedrun round finished.", token);
         await cacheHelper.FlushScoreboardCache(round.GameId, token);
+    }
+
+    private void QueueContainerCleanup(SpeedrunRound? round)
+    {
+        if (round?.FinishedAtUtc is { } cutoffUtc)
+            containerCleanupService.Queue(round.GameId, round.Category, cutoffUtc);
     }
 
     private Task<SpeedrunRound?> CurrentRound(int gameId, CancellationToken token) =>

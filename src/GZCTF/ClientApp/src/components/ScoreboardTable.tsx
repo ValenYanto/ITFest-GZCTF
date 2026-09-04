@@ -198,23 +198,29 @@ const TableRow: FC<{
       </Table.Td>
       {challenges &&
         Object.keys(challenges).map((key) =>
-          challenges[key].map((item) => {
-            const chal = solved?.find((c) => c.id === item.id)
-            const isZeroScore = chal && chal.type === SubmissionType.Normal && (chal.score ?? 0) === 0
-            const icon = isZeroScore ? zeroScoreIcon : iconMap.get(chal?.type ?? SubmissionType.Unaccepted)
+          challenges[key].map((challenge) => {
+            const chal = solved?.find((c) => c.id === challenge.id)
+            const bloodIndex = challenge.bloods?.findIndex((blood) => blood.id === item.id) ?? -1
+            // Derive the marker from challenge blood metadata as well. This keeps FB/SB/TB visible for
+            // zero-percent bonuses and for older cached scoreboards whose solved item was marked Normal.
+            const displayType = bloodIndex >= 0 ? BloodsTypes[bloodIndex] : chal?.type
+            const isZeroScore = bloodIndex < 0 && chal && chal.type === SubmissionType.Normal && (chal.score ?? 0) === 0
+            const icon = isZeroScore
+              ? zeroScoreIcon
+              : iconMap.get(displayType ?? SubmissionType.Unaccepted)
 
-            if (!icon) return <Table.Td key={item.id} className={classes.mono} />
+            if (!icon) return <Table.Td key={challenge.id} className={classes.mono} />
 
-            const cate = challengeCategoryLabelMap.get(item.category as ChallengeCategory)!
+            const cate = challengeCategoryLabelMap.get(challenge.category as ChallengeCategory)!
 
             return (
-              <Table.Td key={item.id} className={classes.mono}>
+              <Table.Td key={challenge.id} className={classes.mono}>
                 <Tooltip
                   transitionProps={{ transition: 'pop' }}
                   label={
                     <Stack align="flex-start" gap={0} maw="20rem">
                       <Text lineClamp={3} fz="xs" className={classes.text}>
-                        {item.title}
+                        {challenge.title}
                       </Text>
                       <Text c={cate.color} fz="xs" className={cx(classes.text, classes.mono)}>
                         + {chal?.score} pts

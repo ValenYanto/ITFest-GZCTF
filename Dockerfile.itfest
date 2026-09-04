@@ -15,6 +15,7 @@ RUN pnpm build
 
 WORKDIR /src/src/GZCTF
 
+RUN cp appsettings.Template.json appsettings.json
 RUN dotnet restore
 RUN dotnet publish GZCTF.csproj -c Release -o /app/publish --no-restore
 
@@ -23,7 +24,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-alpine AS final
 WORKDIR /app
 
 RUN apk add --no-cache icu-libs tzdata curl krb5-libs \
-    && adduser -D -u 1000 appuser
+    && adduser -D -u 1000 appuser \
+    && mkdir -p /app/files \
+    && chown -R appuser:appuser /app
 
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false
 ENV ASPNETCORE_URLS=http://+:8080
@@ -33,5 +36,9 @@ COPY --from=build /app/publish .
 USER appuser
 
 EXPOSE 8080
+EXPOSE 3000
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=12 \
+    CMD curl -fsS http://127.0.0.1:3000/healthz || exit 1
 
 ENTRYPOINT ["dotnet", "GZCTF.dll"]

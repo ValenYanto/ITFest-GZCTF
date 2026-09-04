@@ -87,6 +87,7 @@ internal static class ServicesExtension
             builder.Services.AddScoped<GameExportService>();
             builder.Services.AddScoped<GameImportService>();
             builder.Services.AddScoped<SpeedrunService>();
+            builder.Services.AddSingleton<SpeedrunContainerCleanupService>();
             builder.Services.AddHttpClient<DiscordWebhookService>(client =>
                     client.Timeout = TimeSpan.FromSeconds(5))
                 .RemoveAllLoggers();
@@ -100,6 +101,8 @@ internal static class ServicesExtension
             builder.Services.AddHostedService<CacheMaker>();
             builder.Services.AddHostedService<FlagChecker>();
             builder.Services.AddHostedService<CronJobService>();
+            builder.Services.AddHostedService<SpeedrunContainerCleanupService>(serviceProvider =>
+                serviceProvider.GetRequiredService<SpeedrunContainerCleanupService>());
         }
 
         internal void AddWebServices()

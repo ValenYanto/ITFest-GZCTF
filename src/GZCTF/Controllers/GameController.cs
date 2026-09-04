@@ -836,12 +836,13 @@ public class GameController(
             return BadRequest(
                 new RequestResponse(localizer[nameof(Resources.Program.Game_Ended)], ErrorCodes.GameEnded));
 
-        var isSpeedrun = (await gameRepository.GetGameById(id, token))?.Mode == GameMode.Speedrun;
+        var requestedGame = await gameRepository.GetGameById(id, token);
+        var isSpeedrun = requestedGame?.Mode == GameMode.Speedrun;
         var scoreboard = await gameRepository.TryGetScoreboard(id, token);
         string eTag;
         if (scoreboard is not null)
         {
-            eTag = GameETag(id, scoreboard.UpdateTimeUtc);
+            eTag = GameDetailETag(requestedGame, id, scoreboard.UpdateTimeUtc);
             if (!isSpeedrun && ContextHelper.IsNotModified(Request, Response, eTag, scoreboard.UpdateTimeUtc, true))
                 return StatusCode(StatusCodes.Status304NotModified);
         }
@@ -851,9 +852,10 @@ public class GameController(
         if (context.Result is not null)
             return context.Result;
 
-        scoreboard ??= await gameRepository.GetScoreboard(context.Game!, token);
+        var game = context.Game!;
+        scoreboard ??= await gameRepository.GetScoreboard(game, token);
         var lastModified = scoreboard.UpdateTimeUtc;
-        eTag = GameETag(context.Game!.Id, lastModified);
+        eTag = GameDetailETag(game, game.Id, lastModified);
         ContextHelper.SetCacheHeaders(Response, eTag, lastModified, true);
 
         var challenges = scoreboard.Challenges;
@@ -864,7 +866,7 @@ public class GameController(
             challenges = FilterChallengesByPermission(scoreboard.Challenges, division);
         }
 
-        if (context.Game!.Mode == GameMode.Speedrun)
+        if (game.Mode == GameMode.Speedrun)
         {
             // Filter only the participant challenge-card response. The normal scoreboard remains unchanged.
             var state = await speedrunService.GetState(id, token);
@@ -880,6 +882,9 @@ public class GameController(
                             : pair.Value);
             }
         }
+
+        if (game.ScoreboardFrozen)
+            challenges = MaskChallengeBloodsAfterFreeze(challenges, game.ScoreboardFreezeTimeUtc);
 
         var boardItem = scoreboard.Items.TryGetValue(context.Participation!.TeamId, out var item)
             ? item
@@ -897,8 +902,8 @@ public class GameController(
             TeamToken = context.Participation!.Token,
             Challenges = challenges,
             ChallengeCount = challenges.Count,
-            WriteupRequired = context.Game!.WriteupRequired,
-            WriteupDeadline = context.Game!.WriteupDeadline
+            WriteupRequired = game.WriteupRequired,
+            WriteupDeadline = game.WriteupDeadline
         });
     }
 
@@ -1643,6 +1648,41 @@ public class GameController(
 
     private static string GameETag(int gameId, DateTimeOffset lastModified) =>
         $"\"{gameId}-{lastModified.ToUnixTimeSeconds():X}\"";
+
+    private static string GameDetailETag(Game? game, int gameId, DateTimeOffset lastModified)
+    {
+        var freezeTicks = game?.ScoreboardFreezeTimeUtc?.UtcTicks ?? 0;
+        return $"\"{gameId}-{lastModified.ToUnixTimeSeconds():X}-{game?.ScoreboardFrozen == true}-{freezeTicks:X}\"";
+    }
+
+    internal static Dictionary<ChallengeCategory, IEnumerable<ChallengeInfo>> MaskChallengeBloodsAfterFreeze(
+        Dictionary<ChallengeCategory, IEnumerable<ChallengeInfo>> challenges,
+        DateTimeOffset? freezeTimeUtc) =>
+        challenges.ToDictionary(
+            category => category.Key,
+            category => category.Value.Select(challenge => new ChallengeInfo
+            {
+                Id = challenge.Id,
+                Title = challenge.Title,
+                Category = challenge.Category,
+                Score = challenge.Score,
+                SolvedCount = challenge.SolvedCount,
+                DeadlineUtc = challenge.DeadlineUtc,
+                DisableBloodBonus = challenge.DisableBloodBonus,
+                Bloods = challenge.Bloods.Select(blood =>
+                    ShouldMaskBloodAfterFreeze(blood, freezeTimeUtc)
+                        ? new Blood
+                        {
+                            Id = 0,
+                            Name = "????",
+                            Avatar = null,
+                            SubmitTimeUtc = blood.SubmitTimeUtc
+                        }
+                        : blood).ToList()
+            }).AsEnumerable());
+
+    private static bool ShouldMaskBloodAfterFreeze(Blood blood, DateTimeOffset? freezeTimeUtc) =>
+        freezeTimeUtc is null || blood.SubmitTimeUtc is null || blood.SubmitTimeUtc >= freezeTimeUtc;
 
     private static bool ShouldMaskBloodNotice(Game game, GameNotice notice) =>
         game.ScoreboardFrozen &&

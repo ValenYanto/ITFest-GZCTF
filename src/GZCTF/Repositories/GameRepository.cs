@@ -474,8 +474,6 @@ public class GameRepository(
         }
 
         // 5. sort challenge items by submit time, and update the Score and Type fields
-        var noBonus = game.BloodBonus.NoBonus;
-
         float[] bloodFactors =
         [
             game.BloodBonus.FirstBloodFactor,
@@ -525,21 +523,17 @@ public class GameRepository(
             // 5.2. update score
             if (solve.ScoreEligible)
             {
-                item.Score = noBonus
-                    ? item.Type switch
-                    {
-                        SubmissionType.Unaccepted => throw new UnreachableException(),
-                        _ => challenge.Score
-                    }
-                    : item.Type switch
-                    {
-                        SubmissionType.Unaccepted => throw new UnreachableException(),
-                        SubmissionType.FirstBlood => Convert.ToInt32(challenge.Score * bloodFactors[0]),
-                        SubmissionType.SecondBlood => Convert.ToInt32(challenge.Score * bloodFactors[1]),
-                        SubmissionType.ThirdBlood => Convert.ToInt32(challenge.Score * bloodFactors[2]),
-                        SubmissionType.Normal => challenge.Score,
-                        _ => throw new ArgumentException(nameof(item.Type))
-                    };
+                // Blood identity is independent from its bonus percentage. A 0% bonus has a factor of 1.0,
+                // so FB/SB/TB keep their distinct types and icons while awarding the normal challenge score.
+                item.Score = item.Type switch
+                {
+                    SubmissionType.Unaccepted => throw new UnreachableException(),
+                    SubmissionType.FirstBlood => Convert.ToInt32(challenge.Score * bloodFactors[0]),
+                    SubmissionType.SecondBlood => Convert.ToInt32(challenge.Score * bloodFactors[1]),
+                    SubmissionType.ThirdBlood => Convert.ToInt32(challenge.Score * bloodFactors[2]),
+                    SubmissionType.Normal => challenge.Score,
+                    _ => throw new ArgumentException(nameof(item.Type))
+                };
             }
             else
             {

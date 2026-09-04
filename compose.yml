@@ -1,0 +1,91 @@
+name: itfest-gzctf-local
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - platform
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis_data:/data
+    networks:
+      - platform
+
+  gzctf:
+    image: itfest-gzctf-local:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.itfest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      DOTNET_ENVIRONMENT: Production
+      TZ: Asia/Jakarta
+      YES_I_KNOW_FILES_ARE_NOT_PERSISTED_GO_AHEAD_PLEASE: "true"
+      GZCTF_xorKey: ${GZCTF_XOR_KEY}
+      GZCTF_ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      GZCTF_DisableRateLimit: "true"
+      GZCTF_ConnectionStrings__Database: Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      GZCTF_ConnectionStrings__RedisCache: redis:6379,abortConnect=false,connectRetry=5
+      GZCTF_ConnectionStrings__Storage: disk://path=./files
+      GZCTF_ContainerProvider__Type: Docker
+      GZCTF_ContainerProvider__PortMappingType: Default
+      GZCTF_ContainerProvider__PublicEntry: 127.0.0.1
+      GZCTF_ContainerProvider__DockerConfig__Uri: unix:///var/run/docker.sock
+      GZCTF_ContainerProvider__DockerConfig__ChallengeNetwork: itfest-gzctf-local
+    group_add:
+      - ${DOCKER_GID}
+    ports:
+      - "127.0.0.1:${APP_PORT}:8080"
+    volumes:
+      - app_files:/app/files
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - platform
+      - challenge_open
+      - challenge_isolated
+
+networks:
+  platform:
+    driver: bridge
+  challenge_open:
+    name: itfest-gzctf-local-open
+    driver: bridge
+    attachable: true
+  challenge_isolated:
+    name: itfest-gzctf-local-isolated
+    driver: bridge
+    attachable: true
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+
+volumes:
+  postgres_data:
+  redis_data:
+  app_files:

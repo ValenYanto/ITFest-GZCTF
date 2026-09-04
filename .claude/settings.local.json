@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(rg -rn \"GetParticipation\" src/GZCTF/Repositories/ --include \"*.cs\")",
+      "Bash(rg -n \"ParticipationInfoModel\" src/GZCTF/Models/ --include \"*.cs\")",
+      "Bash(rg -rn \"GetParticipation\" src/GZCTF/Repositories/ -g \"*.cs\")",
+      "Bash(rg -rn \"ParticipationInfoModel\" src/GZCTF/ -g \"*.cs\")",
+      "Bash(rg -rn \"onboarding|Onboarding|BulkOnboarding|bulk\" src/GZCTF/Controllers/ -g \"*.cs\" -i)",
+      "Bash(rg *)"
+    ]
+  }
+}
